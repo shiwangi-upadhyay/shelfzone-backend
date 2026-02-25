@@ -10,15 +10,15 @@
 - [x] L0.7 Repo docs + build log (DocSmith) ✅
 
 ## Layer 1 — Identity
-- [ ] L1.1 Users table (DataArchitect)
-- [ ] L1.2 Register endpoint (ShieldOps)
-- [ ] L1.3 Login endpoint (ShieldOps)
-- [ ] L1.4 Refresh endpoint (ShieldOps)
-- [ ] L1.5 Logout endpoint (ShieldOps)
-- [ ] L1.6 Auth middleware (ShieldOps)
-- [ ] L1.7 GET /me endpoint (BackendForge)
-- [ ] L1.9 Login page UI (UIcraft)
-- [ ] L1.10 Auth test suite (TestRunner)
+- [x] L1.1 Users table + Prisma ORM (DataArchitect) ✅
+- [x] L1.2 Register endpoint (ShieldOps) ✅
+- [x] L1.3 Login endpoint (ShieldOps) ✅
+- [x] L1.4 Refresh endpoint (ShieldOps) ✅
+- [x] L1.5 Logout endpoint (ShieldOps) ✅
+- [x] L1.6 Auth middleware (ShieldOps) ✅
+- [x] L1.7 GET /me endpoint (ShieldOps — combined) ✅
+- [x] L1.9 Login page UI (UIcraft) ✅
+- [x] L1.10 Auth test suite — 12 pass, 14 todo (TestRunner) ✅
 
 ## Layer 2 — Permission
 - [ ] L2.1 Role enum (DataArchitect)
