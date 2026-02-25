@@ -18,7 +18,11 @@ export async function registerHandler(request: FastifyRequest, reply: FastifyRep
   }
 
   try {
-    const user = await authService.register(parsed.data.email, parsed.data.password, parsed.data.role as Role | undefined);
+    const user = await authService.register(
+      parsed.data.email,
+      parsed.data.password,
+      parsed.data.role as Role | undefined,
+    );
     return reply.status(201).send({ user });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'EMAIL_EXISTS') {
@@ -49,8 +53,8 @@ export async function loginHandler(request: FastifyRequest, reply: FastifyReply)
 
 export async function refreshHandler(request: FastifyRequest, reply: FastifyReply) {
   const parsed = RefreshSchema.safeParse(request.body);
-  const refreshToken = (request.cookies as Record<string, string>)?.refreshToken
-    ?? parsed.data?.refreshToken;
+  const refreshToken =
+    (request.cookies as Record<string, string>)?.refreshToken ?? parsed.data?.refreshToken;
 
   if (!refreshToken) {
     return reply.status(400).send({ error: 'Refresh token required' });

@@ -108,7 +108,11 @@ export async function refresh(refreshToken: string) {
   }
 
   // Rotate tokens
-  const newAccessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+  const newAccessToken = generateAccessToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+  });
   const newRefreshToken = generateRefreshToken({ userId: user.id });
   const newRefreshTokenHash = await hashPassword(newRefreshToken);
 
