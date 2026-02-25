@@ -1,12 +1,16 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import cookie from '@fastify/cookie';
 import { env } from './config/env.js';
+import authRoutes from './modules/auth/auth.routes.js';
 
 const app = Fastify({ logger: true });
 
 await app.register(cors);
 await app.register(helmet);
+await app.register(cookie);
+await app.register(authRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
