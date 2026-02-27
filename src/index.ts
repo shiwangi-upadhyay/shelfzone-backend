@@ -9,6 +9,7 @@ import authRoutes from './modules/auth/auth.routes.js';
 import departmentRoutes from './modules/departments/department.routes.js';
 import designationRoutes from './modules/designations/designation.routes.js';
 import employeeRoutes from './modules/employees/employee.routes.js';
+import attendanceRoutes from './modules/attendance/attendance.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -25,6 +26,7 @@ await app.register(authRoutes);
 await app.register(departmentRoutes);
 await app.register(designationRoutes);
 await app.register(employeeRoutes);
+await app.register(attendanceRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
