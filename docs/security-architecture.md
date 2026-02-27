@@ -225,3 +225,250 @@ Client Request
 ```
 
 All layers are composable Fastify preHandlers, applied per-route as needed.
+
+---
+
+## Phase 3 — Attendance, Leave, Payroll & Notifications Security
+
+### Row-Level Security (RLS) Policies — Expanded
+
+With the addition of Attendance, Leave, Payroll, and Notification tables, RLS enforcement extends across all employee-data endpoints.
+
+#### Attendance Table RLS
+
+| Role | Access | Policy |
+|------|--------|--------|
+| SUPER_ADMIN | All rows | No filter |
+| HR_ADMIN | All rows | No filter |
+| MANAGER | Own + direct reports | `WHERE employee_id IN (SELECT id FROM employees WHERE manager_id = current_user_employee_id)` |
+| EMPLOYEE | Own only | `WHERE employee_id = current_user_employee_id` |
+
+**Implementation:** `setRLSContext` applied in attendance list/get handlers; RLS triggers enforce at DB layer.
+
+---
+
+#### LeaveRequest Table RLS
+
+| Role | Access | Policy |
+|------|--------|--------|
+| SUPER_ADMIN | All rows | No filter |
+| HR_ADMIN | All rows | No filter |
+| MANAGER | Own + team's | `WHERE employee_id IN (...) OR reviewed_by = current_user_id` |
+| EMPLOYEE | Own only | `WHERE employee_id = current_user_employee_id` |
+
+**Special Case:** Managers reviewing team leaves have write access to `status`, `reviewNote`, `reviewedAt`.
+
+---
+
+#### Payslip & SalaryStructure Table RLS
+
+| Role | Access | Policy |
+|------|--------|--------|
+| SUPER_ADMIN | All rows | No filter |
+| HR_ADMIN | All rows | No filter |
+| MANAGER | Directs only | `WHERE employee_id IN (SELECT id FROM employees WHERE manager_id = current_user_employee_id)` |
+| EMPLOYEE | Own only | `WHERE employee_id = current_user_employee_id` |
+
+**Encryption Note:** Salary fields are encrypted; decrypted only for SUPER_ADMIN / HR_ADMIN on read.
+
+---
+
+#### Notification Table RLS
+
+| Role | Access | Policy |
+|------|--------|--------|
+| SUPER_ADMIN | All | No filter |
+| HR_ADMIN | All | No filter |
+| MANAGER | Own only | `WHERE user_id = current_user_id` |
+| EMPLOYEE | Own only | `WHERE user_id = current_user_id` |
+
+**No cross-user notification access:** Managers cannot see employee notifications.
+
+---
+
+### Field-Level Encryption — Expanded Coverage
+
+**Phase 3 extends encryption to financial data:**
+
+#### SalaryStructure Encryption
+
+| Field | Encryption | Decryption | Audit |
+|-------|-----------|-----------|-------|
+| `basicSalary` | AES-256-GCM | Admin only | `CREATE salary_structure` event logs amount (redacted) |
+| `hra` | AES-256-GCM | Admin only | — |
+| `da` | AES-256-GCM | Admin only | — |
+| `specialAllowance` | AES-256-GCM | Admin only | — |
+| `medicalAllowance` | AES-256-GCM | Admin only | — |
+| `transportAllowance` | AES-256-GCM | Admin only | — |
+| `grossSalary` (calculated) | AES-256-GCM | Admin only | — |
+
+**Rationale:** Compensation is sensitive PII; encryption at rest ensures compliance with data protection regulations.
+
+**Decryption Flow:**
+```
+GET /api/payroll/salary-structure/:id
+├─ Admin? → Decrypt all fields → Return plaintext
+└─ Non-admin? → Strip encrypted fields → Return null
+```
+
+**On Update:** Re-encrypt with new random IV (old ciphertext discarded).
+
+#### Payslip Encryption
+
+| Field | Encryption | Decryption | Display |
+|-------|-----------|-----------|---------|
+| `basicSalary` | AES-256-GCM | Admin only | Null for non-admin lists |
+| `grossSalary` | AES-256-GCM | Admin only | Null for non-admin lists |
+| `totalDeductions` | AES-256-GCM | Admin only | Null for non-admin lists |
+| `netSalary` | AES-256-GCM | Admin only | Null for non-admin lists |
+
+**Self-Service Exception:** Employees viewing own payslips (`GET /api/me/payslips`) see redacted amounts (not decrypted).
+
+---
+
+### Self-Service Data Isolation
+
+**Employee portal enforces strict data boundaries:**
+
+| Endpoint | User's Own Data | Manager/HR Data | Access |
+|----------|-----------------|-----------------|--------|
+| GET /api/me/profile | ✅ | ❌ | Self-service read |
+| PUT /api/me/profile | ✅ (limited) | ❌ | Limited update |
+| GET /api/me/payslips | ✅ (redacted) | ❌ | Self-service list |
+| GET /api/me/attendance | ✅ | ❌ | Self-service list |
+| GET /api/me/leaves | ✅ | ❌ | Self-service list |
+| GET /api/me/dashboard | ✅ (summary) | ❌ | Self-service summary |
+
+**Implementation:** All self-service endpoints filter by `userId` before returning data; no way to query other users' data.
+
+---
+
+### Notification Privacy
+
+**Notifications are user-scoped; no bulk notification exposure:**
+
+| Operation | Access | Safeguard |
+|-----------|--------|-----------|
+| GET /api/notifications | Own only | Filtered by `userId = current_user_id` |
+| GET /api/notifications/unread-count | Own only | Counts filtered by `userId` |
+| PUT /api/notifications/:id/read | Own only | Verify `notification.userId = current_user_id` before update |
+| PUT /api/notifications/read-all | Own only | Bulk update only own notifications |
+
+**Prevent notification leakage:** Route handlers verify ownership before returning/modifying.
+
+---
+
+### Attendance Audit Trail
+
+**Attendance records are immutable (audit trail):**
+
+- **Create (Check-in):** Logs `action: CREATE`, `resource: Attendance`, `{ employeeId, checkInTime, note }`
+- **Update (Check-out):** Logs `action: UPDATE`, `resource: Attendance`, `{ employeeId, checkOutTime, hoursWorked }`
+- **Regularize (Admin):** Logs `action: CREATE`, `resource: Attendance`, `{ regularized: true, adminNote }`
+
+**No soft-delete:** Attendance is write-once; corrections require admin regularize (creates new record or overwrites).
+
+---
+
+### Leave Approval Audit
+
+**Manager/HR review actions are logged:**
+
+```typescript
+{
+  userId: string;          // Manager/HR approving
+  action: 'UPDATE';
+  resource: 'LeaveRequest';
+  resourceId: string;      // Leave request ID
+  details: {
+    status: 'APPROVED' | 'REJECTED';
+    reviewNote: string;
+    reviewedBy: string;
+    employeeId: string;    // Employee whose leave is being reviewed
+  };
+  ipAddress: string;
+  userAgent: string;
+  timestamp: ISO8601;
+}
+```
+
+**Compliance:** Every leave decision is traceable to approver + timestamp.
+
+---
+
+### Payroll Processing Audit
+
+**Payroll runs are locked once processed:**
+
+| Step | Audit Event | Immutable |
+|------|-------------|-----------|
+| Create run | `action: CREATE`, `resource: PayrollRun`, `{ month, year, totalEmployees }` | After creation, month/year locked |
+| Process run | `action: UPDATE`, `resource: PayrollRun`, `{ status: PROCESSED, successCount, failureCount }` | After processing, payslips immutable |
+| Generate payslip | Fire-and-forget, non-blocking creation | Once generated, cannot be modified |
+
+**No delete:** Payslips cannot be deleted; only admin can void via status (if future enhancement).
+
+---
+
+### Leave Balance Adjustments (Admin)
+
+**Administrative adjustments are logged with reason:**
+
+```typescript
+{
+  userId: string;               // Admin making adjustment
+  action: 'UPDATE';
+  resource: 'LeaveBalance';
+  resourceId: string;           // Balance record ID
+  details: {
+    employeeId: string;
+    leaveType: string;
+    adjustment: number;         // +/- days
+    reason: string;             // Admin note
+    previousBalance: number;
+    newBalance: number;
+  };
+  timestamp: ISO8601;
+}
+```
+
+**Rationale:** Adjustments are sensitive; reason required for compliance.
+
+---
+
+### Session Security (RLS Context)
+
+**RLS session variables are scoped to transaction:**
+
+```typescript
+// Safe: Variables expire at transaction end
+await withRLS(prisma, userId, role, async (tx) => {
+  await tx.attendance.findMany();  // RLS enforced
+});
+// Variables cleared here
+```
+
+**Prevents leakage between requests:** Each request gets its own `SET LOCAL` context.
+
+---
+
+### Data Isolation Summary
+
+| Data | Encryption | RLS | RBAC | Audit |
+|------|-----------|-----|------|-------|
+| Attendance | ❌ | ✅ | ✅ | ✅ |
+| LeaveRequest | ❌ | ✅ | ✅ | ✅ |
+| LeaveBalance | ❌ | ✅ | ✅ | ✅ |
+| SalaryStructure | ✅ AES-256-GCM | ✅ | ✅ | ✅ |
+| Payslip | ✅ AES-256-GCM | ✅ | ✅ | ✅ |
+| Notification | ❌ | ✅ | ✅ | ✅ (limited) |
+
+**Coverage:** 100% of Phase 3 tables have RLS + RBAC; sensitive financial data additionally encrypted.
+
+---
+
+**Last Updated:** 2026-02-27  
+**Layer 3 Security Status:** ✅ Complete  
+**Audit Trail:** Comprehensive logging for all mutations  
+**Encryption:** AES-256-GCM for salary + payroll data  
+**RLS:** Enforced at PostgreSQL level for all role-based access
