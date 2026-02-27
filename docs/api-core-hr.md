@@ -1,6 +1,6 @@
-# Core HR API Documentation (Layer 3A)
+# Core HR API Documentation (Layers 3A–3G)
 
-> Complete endpoint reference for Departments, Designations, and Employees modules. Includes request/response schemas, RBAC rules, PII encryption, pagination, and error handling.
+> Complete endpoint reference for Departments, Designations, Employees, Attendance, Reports, Leave, Leave Admin, Payroll, Self-Service, and Notifications modules. Includes request/response schemas, RBAC rules, encryption, pagination, and error handling.
 
 ---
 
@@ -9,10 +9,17 @@
 1. [Departments API](#departments-api)
 2. [Designations API](#designations-api)
 3. [Employees API](#employees-api)
-4. [Pagination Format](#pagination-format)
-5. [RBAC Behavior](#rbac-behavior)
-6. [PII Encryption & Decryption](#pii-encryption--decryption)
-7. [Error Responses](#error-responses)
+4. [Attendance API](#attendance-api)
+5. [Reports API](#reports-api)
+6. [Leave API](#leave-api)
+7. [Leave Admin API](#leave-admin-api)
+8. [Payroll API](#payroll-api)
+9. [Self-Service API](#self-service-api)
+10. [Notifications API](#notifications-api)
+11. [Pagination Format](#pagination-format)
+12. [RBAC Behavior](#rbac-behavior)
+13. [PII Encryption & Decryption](#pii-encryption--decryption)
+14. [Error Responses](#error-responses)
 
 ---
 
