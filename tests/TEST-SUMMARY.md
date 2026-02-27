@@ -1,7 +1,7 @@
 # ShelfZone Backend Test Suite Summary
 
 **Last Updated:** 2026-02-27  
-**Phase:** Layer 3 — Core HR Modules Complete
+**Phase:** Phase 4 — Agent Management Portal Complete
 
 ---
 
@@ -70,7 +70,16 @@ Unit tests focus on isolated business logic in service classes, utilities, and m
 | `tests/unit/security/encryption.test.ts` | Data encryption/decryption utilities |
 | `tests/unit/security/sanitize.test.ts` | Input sanitization, XSS prevention |
 
-**Total Unit Test Files:** 16
+### Agent Portal (Phase 4)
+
+| File | Coverage |
+|------|----------|
+| `tests/unit/agent-portal/cost-calculator.test.ts` | Cost calculation for all Claude models (opus/sonnet/haiku), input/output cost split, fallback rates |
+| `tests/unit/agent-portal/efficiency-scorer.test.ts` | Efficiency scoring algorithm, factor weights, edge cases (zero sessions, all errors) |
+| `tests/unit/agent-portal/budget.service.test.ts` | Budget CRUD, threshold checks (60%/80%/100%), auto-pause logic, critical agent exemption |
+| `tests/unit/agent-portal/session-logging.test.ts` | Session logging, cost ledger entries, daily stats updates, budget triggers, fire-and-forget error handling |
+
+**Total Unit Test Files:** 20
 
 ---
 
@@ -253,15 +262,158 @@ Integration tests verify end-to-end API behavior, including authentication, auth
 
 ---
 
+### Agent Portal — Agents (8 endpoints)
+
+**File:** `tests/integration/agent-portal/agents.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `POST /api/agent-portal/agents` | Register agent, validation, duplicate names, invalid model, RBAC |
+| `GET /api/agent-portal/agents` | List with pagination, filter by status/type, search by name, RBAC |
+| `GET /api/agent-portal/agents/:id` | Get by ID, team/model info, 404, RBAC |
+| `GET /api/agent-portal/agents/:id/detail` | Detailed info with costs and sessions, RBAC (SUPER_ADMIN/HR_ADMIN only) |
+| `PUT /api/agent-portal/agents/:id` | Update agent, duplicate prevention, model validation, config logging, RBAC |
+| `PUT /api/agent-portal/agents/:id/deactivate` | Deactivate agent, duplicate prevention, logging, RBAC |
+| `PUT /api/agent-portal/agents/:id/archive` | Archive inactive agent, prevent active archive, logging, RBAC (SUPER_ADMIN only) |
+| `POST /api/agent-portal/agents/:id/health-check` | Health check, diagnostics, active/paused agents, RBAC |
+
+**Total Test Stubs:** 47
+
+---
+
+### Agent Portal — Teams (7 endpoints)
+
+**File:** `tests/integration/agent-portal/teams.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `POST /api/agent-portal/teams` | Create team, validation, duplicate names, RBAC |
+| `GET /api/agent-portal/teams` | List with pagination, agent counts, search, RBAC |
+| `GET /api/agent-portal/teams/:id` | Get by ID with agents, 404, RBAC |
+| `PUT /api/agent-portal/teams/:id` | Update team, duplicate prevention, RBAC |
+| `POST /api/agent-portal/teams/:id/assign-agent` | Assign agent, prevent archived agents, duplicate prevention, RBAC |
+| `DELETE /api/agent-portal/teams/:id/remove-agent/:agentId` | Remove agent, error if not in team, RBAC |
+| `GET /api/agent-portal/teams/:id/stats` | Team statistics with sessions/costs/agent breakdown, RBAC |
+
+**Total Test Stubs:** 30
+
+---
+
+### Agent Portal — Analytics (5 endpoints)
+
+**File:** `tests/integration/agent-portal/analytics.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `GET /api/agent-portal/analytics/agent/:id` | Agent analytics with sessions/tokens/costs/success rate, date filters, 404, RBAC |
+| `GET /api/agent-portal/analytics/team/:id` | Team analytics with aggregation and breakdown, date filters, 404, RBAC |
+| `GET /api/agent-portal/analytics/platform` | Platform-wide analytics, top performers, date filters, RBAC |
+| `GET /api/agent-portal/analytics/trends/:agentId` | Token usage trends, daily grouping, input/output breakdown, date filters, 404, RBAC |
+| `GET /api/agent-portal/analytics/efficiency/:agentId` | Efficiency score with breakdown, historical trends, 404, RBAC |
+
+**Total Test Stubs:** 30
+
+---
+
+### Agent Portal — Sessions (2 endpoints)
+
+**File:** `tests/integration/agent-portal/sessions.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `GET /api/agent-portal/sessions` | List sessions with pagination, filters (agentId, status, date), sort, RBAC |
+| `GET /api/agent-portal/sessions/:id` | Get session detail with agent/user/tokens/cost/ledger, 404, RBAC |
+
+**Total Test Stubs:** 12
+
+---
+
+### Agent Portal — Costs (4 endpoints)
+
+**File:** `tests/integration/agent-portal/costs.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `GET /api/agent-portal/costs/agent/:id` | Agent cost summary (daily/weekly/monthly), input vs output breakdown, date filters, 404, RBAC |
+| `GET /api/agent-portal/costs/team/:id` | Team cost summary with aggregation and breakdown, date filters, 404, RBAC |
+| `GET /api/agent-portal/costs/platform` | Platform-wide costs, top contributors, date filters, RBAC |
+| `GET /api/agent-portal/costs/breakdown` | Detailed breakdown by model, input vs output tokens, date filters, RBAC |
+
+**Total Test Stubs:** 25
+
+---
+
+### Agent Portal — Budgets (4 endpoints)
+
+**File:** `tests/integration/agent-portal/budgets.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `POST /api/agent-portal/budgets` | Create/update budget for agent or team, validation (positive cap, exclusive agentId/teamId), RBAC |
+| `GET /api/agent-portal/budgets` | List budgets with pagination, filters (agentId, teamId, month/year), current spend/percentage, RBAC |
+| `GET /api/agent-portal/budgets/check/:agentId` | Check budget status, percentage and alerts (60%/80%/100%), pause indicator, hasBudget=false handling, RBAC |
+| `PUT /api/agent-portal/budgets/:id/unpause` | Unpause agent, logging with userId, budget status update, RBAC (SUPER_ADMIN only), error if not paused |
+
+**Total Test Stubs:** 23
+
+---
+
+### Agent Portal — Config (5 endpoints)
+
+**File:** `tests/integration/agent-portal/config.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `PUT /api/agent-portal/config/:agentId/model` | Change model, validation (opus/sonnet/haiku), config history logging, RBAC, 404 |
+| `PUT /api/agent-portal/config/:agentId/prompt` | Update prompt, validation (non-empty), config history logging, RBAC, 404 |
+| `PUT /api/agent-portal/config/:agentId/params` | Adjust parameters, validation, config history logging, RBAC, 404 |
+| `PUT /api/agent-portal/config/:agentId/toggle` | Toggle status (ACTIVE/INACTIVE), prevent archived toggle, config history logging, RBAC, 404 |
+| `GET /api/agent-portal/config/:agentId/history` | Config history with timestamps/changedBy, pagination, changeType filter, RBAC, 404 |
+
+**Total Test Stubs:** 31
+
+---
+
+### Agent Portal — Commands (2 endpoints)
+
+**File:** `tests/integration/agent-portal/commands.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `GET /api/agent-portal/commands` | List commands with pagination, filters (agentId, status, date), sort, RBAC |
+| `GET /api/agent-portal/commands/:id` | Get command detail with type/payload/status/result/timestamps, 404, RBAC |
+
+**Total Test Stubs:** 11
+
+---
+
+### Agent Portal — API Keys (4 endpoints)
+
+**File:** `tests/integration/agent-portal/api-keys.routes.test.ts`
+
+| Endpoint | Test Cases |
+|----------|-----------|
+| `POST /api/agent-portal/agents/:agentId/api-keys` | Create key with secure generation, expiry, plaintext return once, RBAC |
+| `GET /api/agent-portal/agents/:agentId/api-keys` | List keys (masked), active/revoked status, last used timestamp, RBAC |
+| `POST /api/agent-portal/api-keys/:id/rotate` | Rotate key, revoke old, generate new, plaintext return once, RBAC |
+| `DELETE /api/agent-portal/api-keys/:id` | Revoke key, prevent future use, duplicate revoke handling, RBAC |
+
+**Total Test Stubs:** 23
+
+---
+
 ## Test Count Summary
 
 | Category | File Count | Test Stub Count |
 |----------|-----------|-----------------|
-| **Unit Tests** | 16 | Varies (implemented) |
-| **Integration Tests** | 11 | 313 |
-| **Total** | **27** | **313+** |
+| **Unit Tests** | 20 | 348 (302 passed + 46 agent portal) |
+| **Integration Tests (HR Portal)** | 11 | 286 |
+| **Integration Tests (Agent Portal)** | 9 | 200 |
+| **Total** | **40** | **834** |
 
 ### Integration Test Breakdown by Module
+
+**HR Portal:**
 
 | Module | Endpoints | Test Stubs |
 |--------|-----------|-----------|
@@ -276,7 +428,24 @@ Integration tests verify end-to-end API behavior, including authentication, auth
 | Self-Service | 6 | 33 |
 | Notifications | 4 | 16 |
 | Reports | 3 | 26 |
-| **Total** | **54** | **313** |
+| **HR Portal Total** | **54** | **313** |
+
+**Agent Portal (Phase 4):**
+
+| Module | Endpoints | Test Stubs |
+|--------|-----------|-----------|
+| Agents | 8 | 35 |
+| Teams | 7 | 26 |
+| Analytics | 5 | 27 |
+| Sessions | 2 | 12 |
+| Costs | 4 | 22 |
+| Budgets | 4 | 21 |
+| Config | 5 | 26 |
+| Commands | 2 | 11 |
+| API Keys | 4 | 20 |
+| **Agent Portal Total** | **41** | **200** |
+
+**Grand Total:** | **95** | **486** |
 
 ---
 
@@ -373,4 +542,4 @@ When adding new tests:
 ---
 
 **Generated by:** TestRunner Agent  
-**Build Phase:** 3.27 — Full Integration Test Suite
+**Build Phase:** 4.32 — Agent Portal Integration Test Stubs Complete
