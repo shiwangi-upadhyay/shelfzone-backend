@@ -13,6 +13,7 @@ import attendanceRoutes from './modules/attendance/attendance.routes.js';
 import leaveRoutes from './modules/leave/leave.routes.js';
 import leaveAdminRoutes from './modules/leave-admin/leave-admin.routes.js';
 import reportRoutes from './modules/reports/report.routes.js';
+import payrollRoutes from './modules/payroll/payroll.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -33,6 +34,7 @@ await app.register(attendanceRoutes);
 await app.register(leaveRoutes);
 await app.register(leaveAdminRoutes);
 await app.register(reportRoutes);
+await app.register(payrollRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
