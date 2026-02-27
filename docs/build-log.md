@@ -205,3 +205,188 @@
 - **Status:** ✅ Complete
 - **Files:** `src/config/rate-limit.ts`
 - **Decisions:** Three tiers — global (100/min), login (10/min), register (5/min). Uses `@fastify/rate-limit` with in-memory store (Redis recommended for production). Route-specific limits via Fastify `config.rateLimit` option.
+
+---
+
+## Layer 3 — Core HR (Phase 3A)
+
+### [3.1] Employee/Department/Designation Schema
+- **Agent:** DataArchitect
+- **Status:** ✅ Complete
+- **Output:**
+  - `prisma/schema.prisma` — Updated with 3 new models:
+    - **Department:** `id`, `name` (unique), `description`, `managerId` (nullable), `isActive`, timestamps
+    - **Designation:** `id`, `title` (unique), `level` (1-5), `description`, `isActive`, timestamps
+    - **Employee:** `id`, `employeeCode` (auto-generated), `userId` (unique, FK), `firstName`, `lastName`, `phone`, `encryptedAadhaar`, `encryptedPan`, `encryptedSalary`, `departmentId` (FK), `designationId` (FK), `managerId` (nullable FK), `status` (enum: ACTIVE/INACTIVE/ON_LEAVE/TERMINATED), `dateOfJoining`, `dateOfLeaving` (nullable), timestamps
+  - `prisma/migrations/0002_core_hr_schema/migration.sql` — Migration SQL
+- **Verified:** `prisma generate` succeeds, relations validated, typecheck passes
+- **Decisions:**
+  - Employee code format: `EMP-YYYYMMDD-XXXXX` (auto-generated via `generateEmployeeCode()`)
+  - PII fields (`aadhaar`, `pan`, `salary`) stored encrypted as `encryptedAadhaar`, etc.
+  - Soft deletes via `isActive` (Dept/Desig) and `status` (Employee)
+  - Manager relationship is self-referential on Employee (manager is another Employee)
+  - Employee status enum allows fine-grained tracking (ON_LEAVE, TERMINATED, etc.)
+- **Unblocks:** All HR CRUD endpoints
+
+### [3.2] Department CRUD Endpoints
+- **Agent:** BackendForge
+- **Status:** ✅ Complete
+- **Output:**
+  - `src/modules/departments/department.schemas.ts` — Zod schemas for create/update/list/get
+  - `src/modules/departments/department.service.ts` — Service layer with RBAC-aware queries:
+    - `createDepartment()` — Validates uniqueness of name, creates with optional manager
+    - `getDepartments()` — Paginated list with search (case-insensitive name match) and `isActive` filter
+    - `getDepartmentById()` — Fetch single department
+    - `updateDepartment()` — Patch-style updates with name uniqueness re-check
+    - `deleteDepartment()` — Soft delete; throws 400 if active employees exist
+  - `src/modules/departments/department.controller.ts` — Fastify route handlers with validation, audit logging
+  - `src/modules/departments/department.routes.ts` — Route registration:
+    - POST `/api/departments` (SUPER_ADMIN, HR_ADMIN)
+    - GET `/api/departments` (SUPER_ADMIN, HR_ADMIN, MANAGER, EMPLOYEE)
+    - GET `/api/departments/:id` (same read roles)
+    - PUT `/api/departments/:id` (SUPER_ADMIN, HR_ADMIN)
+    - DELETE `/api/departments/:id` (SUPER_ADMIN, HR_ADMIN)
+- **Verified:** Typecheck passes, all validation constraints enforced, RBAC preHandlers attached
+- **Decisions:**
+  - Department names are case-sensitive for uniqueness (e.g., "Sales" ≠ "sales")
+  - Manager relationship is optional; can be updated/disconnected
+  - Delete is soft (sets `isActive = false`); hard delete prevented if active employees exist
+  - Pagination: default 10 items, max 100; ordered by name ASC
+  - Audit log captures department name on CREATE, changed fields on UPDATE
+- **Unblocks:** Frontend department management UI
+
+### [3.3] Designation CRUD Endpoints
+- **Agent:** BackendForge
+- **Status:** ✅ Complete
+- **Output:**
+  - `src/modules/designations/designation.schemas.ts` — Zod schemas (create/update/list/get)
+  - `src/modules/designations/designation.service.ts` — Service layer with error-first response pattern:
+    - `createDesignation()` — Validates uniqueness of title, creates with level (1-5)
+    - `getDesignations()` — Paginated list with search, `level` filter, `isActive` filter
+    - `getDesignationById()` — Fetch single designation
+    - `updateDesignation()` — Updates with title uniqueness re-check
+    - `deleteDesignation()` — Soft delete; throws if active employees exist
+  - `src/modules/designations/designation.controller.ts` — Route handlers with error handling
+  - `src/modules/designations/designation.routes.ts` — Route registration:
+    - POST `/api/designations` (SUPER_ADMIN, HR_ADMIN)
+    - GET `/api/designations` (all authenticated roles)
+    - GET `/api/designations/:id` (all authenticated roles)
+    - PUT `/api/designations/:id` (SUPER_ADMIN, HR_ADMIN)
+    - DELETE `/api/designations/:id` (SUPER_ADMIN, HR_ADMIN)
+- **Verified:** Typecheck passes, level constraint (1-5) enforced
+- **Decisions:**
+  - Level ranges from 1 (entry-level) to 5 (executive); numeric for future salary band mapping
+  - Service returns error objects instead of throwing (e.g., `{ error: 'DUPLICATE_TITLE' }`)
+  - Controller maps error codes to appropriate HTTP status + message
+  - Pagination: default 10, max 100; ordered by `createdAt` DESC (newest first)
+  - Audit log includes designation title and soft-delete flag
+- **Unblocks:** Frontend designation management, employee level assignment
+
+### [3.4] Employee CRUD with Encrypted PII
+- **Agent:** BackendForge
+- **Status:** ✅ Complete
+- **Output:**
+  - `src/modules/employees/employee.schemas.ts` — Zod schemas (all with PII field types):
+    - Create schema: validates refs (user, dept, desig, manager) + PII strings
+    - Update schema: all optional, allows disconnecting manager with `null`
+    - List query schema: search, filters, sort options
+  - `src/modules/employees/employee.service.ts` — Service layer with dual responsibility:
+    - `createEmployee()` — Validates foreign keys, generates employee code, encrypts PII fields before storage
+    - `getEmployeeById()` — RBAC-aware single fetch:
+      - Admin: sees all + decrypted PII
+      - Manager: sees self + direct reports (no PII)
+      - Employee: sees self only (no PII)
+    - `updateEmployee()` — Admin-only; re-encrypts PII if changed
+    - `deleteEmployee()` — Soft delete (status = TERMINATED, sets dateOfLeaving)
+    - `getEmployees()` — Advanced filtering with RBAC row filtering:
+      - Admin: sees all employees
+      - Manager: sees self + direct reports (where managerId matches)
+      - Employee: sees self only (where userId matches)
+  - Helper functions:
+    - `decryptPii()` — Decrypts and returns plaintext, removes encrypted fields
+    - `stripPii()` — Removes all encrypted PII fields (for non-admin users)
+  - `src/modules/employees/employee.controller.ts` — Route handlers with PII-aware responses
+  - `src/modules/employees/employee.routes.ts` — Route registration:
+    - POST `/api/employees` (SUPER_ADMIN, HR_ADMIN)
+    - GET `/api/employees` (all; rows filtered by RBAC)
+    - GET `/api/employees/:id` (all; access controlled by RBAC)
+    - PUT `/api/employees/:id` (SUPER_ADMIN, HR_ADMIN)
+    - DELETE `/api/employees/:id` (SUPER_ADMIN, HR_ADMIN)
+- **Verified:** Encryption round-trip tested, RBAC enforcement on every endpoint, typecheck strict
+- **Decisions:**
+  - PII encrypted via `encrypt()` before storage; stored as `encryptedAadhaar`, `encryptedPan`, `encryptedSalary`
+  - Admin GET single: returns decrypted plaintext (aadhaar, pan, salary visible)
+  - Admin GET list: still strips PII (security principle: list responses never expose sensitive data)
+  - Non-admin GET: always strips PII entirely (encrypted fields removed)
+  - Employee code auto-generated using `generateEmployeeCode()` helper
+  - On update, PII is **re-encrypted** with new random IV (old ciphertext discarded)
+  - Audit log uses `Object.keys()` on update payload—never logs PII values
+  - Foreign key refs validated before creation (404 if user/dept/desig/manager missing)
+  - Cannot create 2 employee records for same user (409 Conflict)
+- **Unblocks:** Frontend employee forms, PII-aware role-based views
+
+### [3.5] Employee Search, Filters, Pagination
+- **Agent:** BackendForge
+- **Status:** ✅ Complete
+- **Output:**
+  - `GET /api/employees` extended query schema in `employee.schemas.ts`:
+    - `search`: Searches across `firstName`, `lastName`, `employeeCode`, and `user.email` (case-insensitive)
+    - `departmentId`: Filter by single department
+    - `designationId`: Filter by single designation
+    - `status`: Filter by status enum (ACTIVE, INACTIVE, ON_LEAVE, TERMINATED)
+    - `managerId`: Filter by direct manager
+    - `sortBy`: Options: `firstName`, `lastName`, `employeeCode`, `dateOfJoining`, `createdAt` (default)
+    - `sortOrder`: `asc` or `desc` (default: desc)
+  - Advanced WHERE clause logic in `getEmployees()`:
+    - RBAC filtering applied first (role-based row constraints)
+    - Search filters combined with RBAC via AND/OR logic:
+      - If RBAC filters exist: `AND [{ OR: rbacConditions }, { OR: searchConditions }]`
+      - Otherwise: plain `OR` on search fields
+    - Additional filters stacked on top (dept, desig, status, manager)
+  - Pagination + sorting:
+    - Default: `page=1, limit=10, sortBy='createdAt', sortOrder='desc'`
+    - Max limit enforced at 100
+    - Ordered by selected field in requested direction
+  - Response format:
+    - `data`: List of employees (with PII stripped for all roles in list context)
+    - `pagination`: `{ page, limit, total, totalPages }`
+- **Verified:** Complex WHERE clauses built correctly, RBAC row filters applied, search multi-field, sort options work
+- **Decisions:**
+  - Search is **full-text substring match** (case-insensitive; uses Prisma `contains` with `mode: 'insensitive'`)
+  - Manager field (`managerId`) can be used to see all direct reports of a specific manager
+  - Status filter narrows results to employees in specific state (useful for leave/termination reports)
+  - `createdAt` default sort ensures consistent pagination for new hires
+  - List endpoint always strips PII (even for admins) to prevent accidental bulk PII exposure
+  - Pagination calculation: `skip = (page - 1) * limit`; `totalPages = ceil(total / limit)`
+- **Unblocks:** Search UI, advanced employee roster reports, HR filtering workflows
+
+### [3.6] API Documentation
+- **Agent:** DocSmith
+- **Status:** ✅ Complete
+- **Output:**
+  - `docs/api-core-hr.md` — Comprehensive API reference documenting all 15 endpoints:
+    - Full request/response schemas (TypeScript + examples)
+    - Query param constraints and defaults
+    - RBAC matrix (access control by role)
+    - PII encryption/decryption flow (encrypt on create, decrypt for admin GET single, strip on list)
+    - Pagination format (`{ data, pagination }`)
+    - Error responses with HTTP status codes
+    - Audit trail details for each mutation
+    - Implementation notes (soft deletes, typecheck, transactions, etc.)
+  - Organized by module (Departments, Designations, Employees)
+  - Includes cross-references to encryption logic and audit behavior
+- **Verified:** All endpoint signatures match source code, constraints documented, RBAC rules accurate
+- **Decisions:**
+  - Docs generated from actual source schemas (not hand-written guesses)
+  - Includes rationale for each design decision (e.g., why re-encrypt PII on update, why list strips PII)
+  - Examples show real query strings and response objects
+  - Error table maps HTTP codes to scenarios
+  - PII section explains IV format, key source, admin-only decryption
+  - Pagination section provides concrete calculation examples
+- **Unblocks:** Frontend integration, external API consumers, QA test cases
+
+### Layer 3A — Issues Found & Fixed
+- No critical bugs; all tests pass, all validation enforced
+- TypeScript strict mode: zero errors
+- ESLint: zero new violations (auto-fixed 2 formatting issues)
+- Decision: Employee codes use format `EMP-YYYYMMDD-XXXXX` to ensure sortability and date context
