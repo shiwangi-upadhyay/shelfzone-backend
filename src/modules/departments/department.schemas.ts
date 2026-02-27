@@ -19,7 +19,7 @@ export const getDepartmentParamsSchema = z.object({
 export const listDepartmentsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(10),
-  search: z.string().optional(),
+  search: z.string().max(200).trim().optional(),
   isActive: z
     .enum(['true', 'false'])
     .transform((v) => v === 'true')
