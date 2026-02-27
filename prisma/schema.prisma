@@ -6,6 +6,21 @@ datasource db {
   provider = "postgresql"
 }
 
+enum AgentStatus {
+  ACTIVE
+  INACTIVE
+  DRAFT
+  PAUSED
+  ARCHIVED
+}
+
+enum AgentType {
+  CHAT
+  WORKFLOW
+  SCHEDULED
+  INTEGRATION
+}
+
 enum Role {
   SUPER_ADMIN
   HR_ADMIN
@@ -90,6 +105,14 @@ model User {
   processedPayrolls       PayrollRun[]       @relation("PayrollProcessor")
 
   notifications           Notification[]
+
+  // Agent management relations
+  createdAgents           AgentRegistry[]    @relation("AgentCreator")
+  updatedAgents           AgentRegistry[]    @relation("AgentUpdater")
+  createdTeams            AgentTeam[]        @relation("TeamCreator")
+  agentSessions           AgentSession[]
+  agentConfigChanges      AgentConfigLog[]
+  commandLogs             CommandLog[]
 
   @@map("users")
 }
@@ -391,4 +414,202 @@ model AuditLog {
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@map("audit_logs")
+}
+
+// ─── Agent Management ────────────────────────────────────────────────
+
+model AgentRegistry {
+  id                  String      @id @default(cuid())
+  name                String      @unique
+  slug                String      @unique
+  description         String?
+  type                AgentType
+  status              AgentStatus @default(DRAFT)
+  model               String
+  systemPrompt        String?     @map("system_prompt")
+  systemPromptVersion Int         @default(1) @map("system_prompt_version")
+  temperature         Float       @default(0.7)
+  maxTokens           Int         @default(4096) @map("max_tokens")
+  timeoutMs           Int         @default(30000) @map("timeout_ms")
+  capabilities        Json?
+  tools               Json?
+  metadata            Json?
+  teamId              String?     @map("team_id")
+  isCritical          Boolean     @default(false) @map("is_critical")
+  createdBy           String      @map("created_by")
+  updatedBy           String?     @map("updated_by")
+  lastHealthCheck     DateTime?   @map("last_health_check")
+  lastHealthStatus    String?     @map("last_health_status")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  team           AgentTeam?       @relation("TeamAgents", fields: [teamId], references: [id])
+  creator        User             @relation("AgentCreator", fields: [createdBy], references: [id])
+  updater        User?            @relation("AgentUpdater", fields: [updatedBy], references: [id])
+  sessions       AgentSession[]
+  costLedger     AgentCostLedger[]
+  dailyStats     AgentDailyStats[]
+  budgets        AgentBudget[]
+  configLogs     AgentConfigLog[]
+  leadOfTeams    AgentTeam[]      @relation("TeamLead")
+
+  @@map("agent_registry")
+}
+
+model AgentTeam {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  leadAgentId String?  @map("lead_agent_id")
+  createdBy   String   @map("created_by")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  agents    AgentRegistry[] @relation("TeamAgents")
+  leadAgent AgentRegistry?  @relation("TeamLead", fields: [leadAgentId], references: [id])
+  creator   User            @relation("TeamCreator", fields: [createdBy], references: [id])
+  budgets   AgentBudget[]
+
+  @@map("agent_teams")
+}
+
+model AgentSession {
+  id            String   @id @default(cuid())
+  agentId       String   @map("agent_id")
+  userId        String?  @map("user_id")
+  sessionKey    String?  @map("session_key")
+  inputTokens   Int      @map("input_tokens")
+  outputTokens  Int      @map("output_tokens")
+  totalTokens   Int      @map("total_tokens")
+  latencyMs     Int      @map("latency_ms")
+  cost          Float
+  status        String
+  errorMessage  String?  @map("error_message")
+  inputPreview  String?  @map("input_preview")
+  outputPreview String?  @map("output_preview")
+  metadata      Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agent      AgentRegistry     @relation(fields: [agentId], references: [id])
+  user       User?             @relation(fields: [userId], references: [id])
+  costLedger AgentCostLedger[]
+
+  @@index([agentId, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("agent_sessions")
+}
+
+model AgentCostLedger {
+  id             String   @id @default(cuid())
+  agentId        String   @map("agent_id")
+  sessionId      String   @map("session_id")
+  model          String
+  inputTokens    Int      @map("input_tokens")
+  outputTokens   Int      @map("output_tokens")
+  inputCostRate  Float    @map("input_cost_rate")
+  outputCostRate Float    @map("output_cost_rate")
+  inputCost      Float    @map("input_cost")
+  outputCost     Float    @map("output_cost")
+  totalCost      Float    @map("total_cost")
+  currency       String   @default("USD")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agent   AgentRegistry @relation(fields: [agentId], references: [id])
+  session AgentSession  @relation(fields: [sessionId], references: [id])
+
+  @@index([agentId, createdAt])
+  @@map("agent_cost_ledger")
+}
+
+model AgentDailyStats {
+  id                String   @id @default(cuid())
+  agentId           String   @map("agent_id")
+  date              DateTime @db.Date
+  totalSessions     Int      @default(0) @map("total_sessions")
+  successCount      Int      @default(0) @map("success_count")
+  errorCount        Int      @default(0) @map("error_count")
+  timeoutCount      Int      @default(0) @map("timeout_count")
+  totalInputTokens  Int      @default(0) @map("total_input_tokens")
+  totalOutputTokens Int      @default(0) @map("total_output_tokens")
+  totalCost         Float    @default(0) @map("total_cost")
+  avgLatencyMs      Float    @default(0) @map("avg_latency_ms")
+  p95LatencyMs      Float    @default(0) @map("p95_latency_ms")
+  uniqueUsers       Int      @default(0) @map("unique_users")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  agent AgentRegistry @relation(fields: [agentId], references: [id])
+
+  @@unique([agentId, date])
+  @@map("agent_daily_stats")
+}
+
+model AgentBudget {
+  id               String    @id @default(cuid())
+  agentId          String?   @map("agent_id")
+  teamId           String?   @map("team_id")
+  monthlyCapUsd    Float     @map("monthly_cap_usd")
+  alertThreshold60 Boolean   @default(true) @map("alert_threshold_60")
+  alertThreshold80 Boolean   @default(true) @map("alert_threshold_80")
+  alertThreshold100 Boolean  @default(true) @map("alert_threshold_100")
+  currentSpend     Float     @default(0) @map("current_spend")
+  month            Int
+  year             Int
+  autoPauseEnabled Boolean   @default(true) @map("auto_pause_enabled")
+  isPaused         Boolean   @default(false) @map("is_paused")
+  pausedAt         DateTime? @map("paused_at")
+  pausedBy         String?   @map("paused_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  agent AgentRegistry? @relation(fields: [agentId], references: [id])
+  team  AgentTeam?     @relation(fields: [teamId], references: [id])
+
+  @@unique([agentId, teamId, month, year])
+  @@map("agent_budgets")
+}
+
+model AgentConfigLog {
+  id            String   @id @default(cuid())
+  agentId       String   @map("agent_id")
+  changedBy     String   @map("changed_by")
+  changeType    String   @map("change_type")
+  previousValue Json?    @map("previous_value")
+  newValue      Json?    @map("new_value")
+  reason        String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  // Relations
+  agent   AgentRegistry @relation(fields: [agentId], references: [id])
+  changer User          @relation(fields: [changedBy], references: [id])
+
+  @@index([agentId, createdAt])
+  @@map("agent_config_log")
+}
+
+model CommandLog {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id")
+  command        String
+  classification String
+  agentsInvoked  Json?    @map("agents_invoked")
+  outcome        String
+  totalCost      Float    @default(0) @map("total_cost")
+  totalLatencyMs Int      @default(0) @map("total_latency_ms")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("command_log")
 }
