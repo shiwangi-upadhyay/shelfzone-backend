@@ -13,6 +13,16 @@ enum Role {
   EMPLOYEE
 }
 
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LATE
+  ON_LEAVE
+  HOLIDAY
+  WEEKEND
+}
+
 enum EmployeeStatus {
   ACTIVE
   INACTIVE
@@ -32,7 +42,8 @@ model User {
 
   // Relations
   employee           Employee?
-  managedDepartments Department[] @relation("DepartmentManager")
+  managedDepartments      Department[]       @relation("DepartmentManager")
+  regularizedAttendances  AttendanceRecord[] @relation("AttendanceRegularizer")
 
   @@map("users")
 }
@@ -91,10 +102,62 @@ model Employee {
   user          User        @relation(fields: [userId], references: [id])
   department    Department  @relation(fields: [departmentId], references: [id])
   designation   Designation @relation(fields: [designationId], references: [id])
-  manager       Employee?   @relation("EmployeeHierarchy", fields: [managerId], references: [id])
-  directReports Employee[]  @relation("EmployeeHierarchy")
+  manager              Employee?            @relation("EmployeeHierarchy", fields: [managerId], references: [id])
+  directReports        Employee[]           @relation("EmployeeHierarchy")
+  attendanceRecords    AttendanceRecord[]
+  attendanceSummaries  AttendanceSummary[]
 
   @@map("employees")
+}
+
+model AttendanceRecord {
+  id              String           @id @default(cuid())
+  employeeId      String           @map("employee_id")
+  date            DateTime         @db.Date
+  checkIn         DateTime         @map("check_in")
+  checkOut        DateTime?        @map("check_out")
+  checkInNote     String?          @map("check_in_note")
+  checkOutNote    String?          @map("check_out_note")
+  status          AttendanceStatus
+  hoursWorked     Float?           @map("hours_worked")
+  overtimeHours   Float?           @map("overtime_hours")
+  isRegularized   Boolean          @default(false) @map("is_regularized")
+  regularizedBy   String?          @map("regularized_by")
+  regularizedAt   DateTime?        @map("regularized_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  employee    Employee @relation(fields: [employeeId], references: [id])
+  regularizer User?    @relation("AttendanceRegularizer", fields: [regularizedBy], references: [id])
+
+  @@unique([employeeId, date])
+  @@index([date])
+  @@map("attendance_records")
+}
+
+model AttendanceSummary {
+  id                 String   @id @default(cuid())
+  employeeId         String   @map("employee_id")
+  month              Int
+  year               Int
+  totalPresent       Int      @default(0) @map("total_present")
+  totalAbsent        Int      @default(0) @map("total_absent")
+  totalHalfDays      Int      @default(0) @map("total_half_days")
+  totalLate          Int      @default(0) @map("total_late")
+  totalLeaves        Int      @default(0) @map("total_leaves")
+  totalHolidays      Int      @default(0) @map("total_holidays")
+  totalHoursWorked   Float    @default(0) @map("total_hours_worked")
+  totalOvertimeHours Float    @default(0) @map("total_overtime_hours")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@index([employeeId, year, month])
+  @@map("attendance_summaries")
 }
 
 model AuditLog {
