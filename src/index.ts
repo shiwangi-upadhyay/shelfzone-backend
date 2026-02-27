@@ -8,6 +8,7 @@ import { globalRateLimitConfig } from './config/rate-limit.js';
 import authRoutes from './modules/auth/auth.routes.js';
 import departmentRoutes from './modules/departments/department.routes.js';
 import designationRoutes from './modules/designations/designation.routes.js';
+import employeeRoutes from './modules/employees/employee.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -23,6 +24,7 @@ app.addHook('preHandler', sanitizeBody);
 await app.register(authRoutes);
 await app.register(departmentRoutes);
 await app.register(designationRoutes);
+await app.register(employeeRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',

@@ -21,17 +21,17 @@ enum EmployeeStatus {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  passwordHash  String   @map("password_hash")
-  role          Role     @default(EMPLOYEE)
-  isActive      Boolean  @default(true) @map("is_active")
-  refreshToken  String?  @map("refresh_token")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(EMPLOYEE)
+  isActive     Boolean  @default(true) @map("is_active")
+  refreshToken String?  @map("refresh_token")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relations
-  employee         Employee?
+  employee           Employee?
   managedDepartments Department[] @relation("DepartmentManager")
 
   @@map("users")
@@ -69,23 +69,23 @@ model Designation {
 }
 
 model Employee {
-  id              String         @id @default(cuid())
-  employeeCode    String         @unique @map("employee_code")
-  userId          String         @unique @map("user_id")
-  departmentId    String         @map("department_id")
-  designationId   String         @map("designation_id")
-  firstName       String         @map("first_name")
-  lastName        String         @map("last_name")
-  phone           String?
-  encryptedAadhaar String?       @map("encrypted_aadhaar")
-  encryptedPan     String?       @map("encrypted_pan")
-  encryptedSalary  String?       @map("encrypted_salary")
-  dateOfJoining   DateTime       @map("date_of_joining")
-  dateOfLeaving   DateTime?      @map("date_of_leaving")
-  status          EmployeeStatus @default(ACTIVE)
-  managerId       String?        @map("manager_id")
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  id               String         @id @default(cuid())
+  employeeCode     String         @unique @map("employee_code")
+  userId           String         @unique @map("user_id")
+  departmentId     String         @map("department_id")
+  designationId    String         @map("designation_id")
+  firstName        String         @map("first_name")
+  lastName         String         @map("last_name")
+  phone            String?
+  encryptedAadhaar String?        @map("encrypted_aadhaar")
+  encryptedPan     String?        @map("encrypted_pan")
+  encryptedSalary  String?        @map("encrypted_salary")
+  dateOfJoining    DateTime       @map("date_of_joining")
+  dateOfLeaving    DateTime?      @map("date_of_leaving")
+  status           EmployeeStatus @default(ACTIVE)
+  managerId        String?        @map("manager_id")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
 
   // Relations
   user          User        @relation(fields: [userId], references: [id])
