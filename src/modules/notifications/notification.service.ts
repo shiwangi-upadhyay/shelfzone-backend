@@ -1,4 +1,4 @@
-import { type NotificationType, type Role } from '@prisma/client';
+import { type NotificationType, type Prisma, type Role } from '@prisma/client';
 import prisma from '../../lib/prisma.js';
 
 /**
@@ -9,7 +9,7 @@ export function createNotification(
   type: NotificationType,
   title: string,
   message: string,
-  metadata?: Record<string, unknown>,
+  metadata?: Prisma.InputJsonValue,
 ): void {
   prisma.notification
     .create({
