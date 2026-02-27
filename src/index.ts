@@ -15,6 +15,7 @@ import leaveAdminRoutes from './modules/leave-admin/leave-admin.routes.js';
 import reportRoutes from './modules/reports/report.routes.js';
 import payrollRoutes from './modules/payroll/payroll.routes.js';
 import selfServiceRoutes from './modules/self-service/self-service.routes.js';
+import notificationRoutes from './modules/notifications/notification.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -37,6 +38,7 @@ await app.register(leaveAdminRoutes);
 await app.register(reportRoutes);
 await app.register(payrollRoutes);
 await app.register(selfServiceRoutes);
+await app.register(notificationRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
