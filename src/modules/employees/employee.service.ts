@@ -237,6 +237,7 @@ export async function getEmployees(
     const searchFilter: Prisma.EmployeeWhereInput[] = [
       { firstName: { contains: search, mode: 'insensitive' } },
       { lastName: { contains: search, mode: 'insensitive' } },
+      { employeeCode: { contains: search, mode: 'insensitive' } },
       { user: { email: { contains: search, mode: 'insensitive' } } },
     ];
 
