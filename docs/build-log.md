@@ -165,3 +165,43 @@
 - ESLint flat config fix (already fixed in L0) — no new issues
 - Prettier formatting: 3 files auto-formatted after ShieldOps commit
 - No functional bugs found
+
+---
+
+## Layer 2 — Permission & Security
+
+### [L2.2] RBAC Middleware
+- **Agent:** ShieldOps
+- **Status:** ✅ Complete
+- **Files:** `src/middleware/rbac.middleware.ts`
+- **Decisions:** Generic `requireRole(...roles)` factory returning Fastify preHandler. Returns 403 with "Insufficient permissions" on failure. Role checked against Prisma `Role` enum.
+
+### [L2.3] Row-Level Security (RLS)
+- **Agent:** ShieldOps
+- **Status:** ✅ Complete
+- **Files:** `src/lib/rls.ts`
+- **Decisions:** `SET LOCAL` for transaction-scoped session variables. `withRLS()` wrapper for ergonomic RLS-aware transactions. Single-quote escaping for SQL injection prevention.
+
+### [L2.5] Field-Level Encryption
+- **Agent:** ShieldOps
+- **Status:** ✅ Complete
+- **Files:** `src/lib/encryption.ts`, updated `prisma/schema.prisma` (added `encrypted_aadhaar`, `encrypted_pan`, `encrypted_salary` to users)
+- **Decisions:** AES-256-GCM with random IV per encryption. Key from `ENCRYPTION_KEY` env var (32 bytes hex). Ciphertext format: `iv:authTag:ciphertext` (all hex). Application-layer encryption, not DB-level.
+
+### [L2.6] Audit Logging
+- **Agent:** ShieldOps
+- **Status:** ✅ Complete
+- **Files:** `src/lib/audit.ts`, updated `prisma/schema.prisma` (added `AuditLog` model → `audit_logs` table)
+- **Decisions:** Fire-and-forget pattern — never awaited, errors silently swallowed. Write-once immutability (no `updatedAt`, no update/delete ops). Nullable `userId` for system events.
+
+### [L2.7] Prompt Injection Sanitization
+- **Agent:** ShieldOps
+- **Status:** ✅ Complete
+- **Files:** `src/lib/sanitize.ts`, `src/middleware/sanitize.middleware.ts`
+- **Decisions:** Two-phase approach: validate then sanitize. 13 regex patterns covering prompt injection, HTML injection, and JS URI attacks. Password/token fields skipped to avoid credential corruption. Returns 400 with field-specific error on validation failure.
+
+### [L2.8] Rate Limiting
+- **Agent:** ShieldOps
+- **Status:** ✅ Complete
+- **Files:** `src/config/rate-limit.ts`
+- **Decisions:** Three tiers — global (100/min), login (10/min), register (5/min). Uses `@fastify/rate-limit` with in-memory store (Redis recommended for production). Route-specific limits via Fastify `config.rateLimit` option.
