@@ -65,6 +65,21 @@ export enum NotificationType {
   SYSTEM_ANNOUNCEMENT = 'SYSTEM_ANNOUNCEMENT',
 }
 
+export enum AgentStatus {
+  ACTIVE = 'ACTIVE',
+  INACTIVE = 'INACTIVE',
+  DRAFT = 'DRAFT',
+  PAUSED = 'PAUSED',
+  ARCHIVED = 'ARCHIVED',
+}
+
+export enum AgentType {
+  CHAT = 'CHAT',
+  WORKFLOW = 'WORKFLOW',
+  SCHEDULED = 'SCHEDULED',
+  INTEGRATION = 'INTEGRATION',
+}
+
 export type Prisma = {
   InputJsonValue: any;
 };
