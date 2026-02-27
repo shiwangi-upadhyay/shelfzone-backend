@@ -2,23 +2,23 @@ import { z } from 'zod';
 
 export const createSalaryStructureSchema = z.object({
   employeeId: z.string().cuid(),
-  basicSalary: z.number().positive(),
-  hra: z.number().nonnegative().optional(),
-  da: z.number().nonnegative().optional(),
-  specialAllowance: z.number().nonnegative().optional(),
-  medicalAllowance: z.number().nonnegative().optional(),
-  transportAllowance: z.number().nonnegative().optional(),
-  effectiveFrom: z.string().date(),
+  basicSalary: z.number().positive().max(10_000_000),
+  hra: z.number().nonnegative().max(10_000_000).optional(),
+  da: z.number().nonnegative().max(10_000_000).optional(),
+  specialAllowance: z.number().nonnegative().max(10_000_000).optional(),
+  medicalAllowance: z.number().nonnegative().max(10_000_000).optional(),
+  transportAllowance: z.number().nonnegative().max(10_000_000).optional(),
+  effectiveFrom: z.string().trim().date(),
 });
 
 export const updateSalaryStructureSchema = z.object({
-  basicSalary: z.number().positive().optional(),
-  hra: z.number().nonnegative().optional(),
-  da: z.number().nonnegative().optional(),
-  specialAllowance: z.number().nonnegative().optional(),
-  medicalAllowance: z.number().nonnegative().optional(),
-  transportAllowance: z.number().nonnegative().optional(),
-  effectiveFrom: z.string().date().optional(),
+  basicSalary: z.number().positive().max(10_000_000).optional(),
+  hra: z.number().nonnegative().max(10_000_000).optional(),
+  da: z.number().nonnegative().max(10_000_000).optional(),
+  specialAllowance: z.number().nonnegative().max(10_000_000).optional(),
+  medicalAllowance: z.number().nonnegative().max(10_000_000).optional(),
+  transportAllowance: z.number().nonnegative().max(10_000_000).optional(),
+  effectiveFrom: z.string().trim().date().optional(),
 });
 
 export const salaryStructureParamsSchema = z.object({

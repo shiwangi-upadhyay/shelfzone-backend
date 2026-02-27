@@ -46,3 +46,10 @@ export enum HalfDayType {
   FIRST_HALF = 'FIRST_HALF',
   SECOND_HALF = 'SECOND_HALF',
 }
+
+export enum PayrollStatus {
+  DRAFT = 'DRAFT',
+  PROCESSING = 'PROCESSING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
