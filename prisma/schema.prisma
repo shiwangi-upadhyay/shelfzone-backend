@@ -13,6 +13,58 @@ enum Role {
   EMPLOYEE
 }
 
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LATE
+  ON_LEAVE
+  HOLIDAY
+  WEEKEND
+}
+
+enum LeaveType {
+  CASUAL
+  SICK
+  EARNED
+  MATERNITY
+  PATERNITY
+  COMPENSATORY
+  UNPAID
+  BEREAVEMENT
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum PayrollStatus {
+  DRAFT
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+enum PayComponent {
+  BASIC
+  HRA
+  DA
+  SPECIAL_ALLOWANCE
+  MEDICAL
+  TRANSPORT
+  PF_EMPLOYEE
+  PF_EMPLOYER
+  ESI_EMPLOYEE
+  ESI_EMPLOYER
+  PROFESSIONAL_TAX
+  TDS
+  OTHER_DEDUCTION
+  OTHER_ALLOWANCE
+}
+
 enum EmployeeStatus {
   ACTIVE
   INACTIVE
@@ -21,21 +73,310 @@ enum EmployeeStatus {
 }
 
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  passwordHash  String   @map("password_hash")
-  role          Role     @default(EMPLOYEE)
-  isActive      Boolean  @default(true) @map("is_active")
-  refreshToken  String?  @map("refresh_token")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role     @default(EMPLOYEE)
+  isActive     Boolean  @default(true) @map("is_active")
+  refreshToken String?  @map("refresh_token")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  // Encrypted PII fields (AES-256-GCM)
-  encryptedAadhaar String? @map("encrypted_aadhaar")
-  encryptedPan     String? @map("encrypted_pan")
-  encryptedSalary  String? @map("encrypted_salary")
+  // Relations
+  employee                Employee?
+  managedDepartments      Department[]       @relation("DepartmentManager")
+  regularizedAttendances  AttendanceRecord[] @relation("AttendanceRegularizer")
+  reviewedLeaveRequests   LeaveRequest[]     @relation("LeaveReviewer")
+  processedPayrolls       PayrollRun[]       @relation("PayrollProcessor")
+
+  notifications           Notification[]
 
   @@map("users")
+}
+
+enum NotificationType {
+  LEAVE_APPLIED
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+  LEAVE_CANCELLED
+  ATTENDANCE_REGULARIZED
+  PAYSLIP_GENERATED
+  PROFILE_UPDATED
+  SYSTEM_ANNOUNCEMENT
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false) @map("is_read")
+  readAt    DateTime?        @map("read_at")
+  metadata  Json?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model Department {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  managerId   String?  @map("manager_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  manager   User?      @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees Employee[]
+
+  @@map("departments")
+}
+
+model Designation {
+  id          String   @id @default(cuid())
+  title       String   @unique
+  level       Int
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employees Employee[]
+
+  @@map("designations")
+}
+
+model Employee {
+  id               String         @id @default(cuid())
+  employeeCode     String         @unique @map("employee_code")
+  userId           String         @unique @map("user_id")
+  departmentId     String         @map("department_id")
+  designationId    String         @map("designation_id")
+  firstName        String         @map("first_name")
+  lastName         String         @map("last_name")
+  phone            String?
+  encryptedAadhaar String?        @map("encrypted_aadhaar")
+  encryptedPan     String?        @map("encrypted_pan")
+  encryptedSalary  String?        @map("encrypted_salary")
+  dateOfJoining    DateTime       @map("date_of_joining")
+  dateOfLeaving    DateTime?      @map("date_of_leaving")
+  status           EmployeeStatus @default(ACTIVE)
+  managerId        String?        @map("manager_id")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  user          User        @relation(fields: [userId], references: [id])
+  department    Department  @relation(fields: [departmentId], references: [id])
+  designation   Designation @relation(fields: [designationId], references: [id])
+  manager              Employee?            @relation("EmployeeHierarchy", fields: [managerId], references: [id])
+  directReports        Employee[]           @relation("EmployeeHierarchy")
+  attendanceRecords    AttendanceRecord[]
+  attendanceSummaries  AttendanceSummary[]
+  leaveBalances        LeaveBalance[]
+  leaveRequests        LeaveRequest[]
+  salaryStructure      SalaryStructure?
+  payslips             Payslip[]
+
+  @@map("employees")
+}
+
+model AttendanceRecord {
+  id              String           @id @default(cuid())
+  employeeId      String           @map("employee_id")
+  date            DateTime         @db.Date
+  checkIn         DateTime         @map("check_in")
+  checkOut        DateTime?        @map("check_out")
+  checkInNote     String?          @map("check_in_note")
+  checkOutNote    String?          @map("check_out_note")
+  status          AttendanceStatus
+  hoursWorked     Float?           @map("hours_worked")
+  overtimeHours   Float?           @map("overtime_hours")
+  isRegularized   Boolean          @default(false) @map("is_regularized")
+  regularizedBy   String?          @map("regularized_by")
+  regularizedAt   DateTime?        @map("regularized_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  employee    Employee @relation(fields: [employeeId], references: [id])
+  regularizer User?    @relation("AttendanceRegularizer", fields: [regularizedBy], references: [id])
+
+  @@unique([employeeId, date])
+  @@index([date])
+  @@map("attendance_records")
+}
+
+model AttendanceSummary {
+  id                 String   @id @default(cuid())
+  employeeId         String   @map("employee_id")
+  month              Int
+  year               Int
+  totalPresent       Int      @default(0) @map("total_present")
+  totalAbsent        Int      @default(0) @map("total_absent")
+  totalHalfDays      Int      @default(0) @map("total_half_days")
+  totalLate          Int      @default(0) @map("total_late")
+  totalLeaves        Int      @default(0) @map("total_leaves")
+  totalHolidays      Int      @default(0) @map("total_holidays")
+  totalHoursWorked   Float    @default(0) @map("total_hours_worked")
+  totalOvertimeHours Float    @default(0) @map("total_overtime_hours")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@index([employeeId, year, month])
+  @@map("attendance_summaries")
+}
+
+model LeavePolicy {
+  id                 String    @id @default(cuid())
+  leaveType          LeaveType @unique @map("leave_type")
+  name               String
+  description        String?
+  totalDaysPerYear   Int       @map("total_days_per_year")
+  maxConsecutiveDays Int       @map("max_consecutive_days")
+  canCarryForward    Boolean   @default(false) @map("can_carry_forward")
+  maxCarryForwardDays Int      @default(0) @map("max_carry_forward_days")
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@map("leave_policies")
+}
+
+model LeaveBalance {
+  id              String    @id @default(cuid())
+  employeeId      String    @map("employee_id")
+  leaveType       LeaveType @map("leave_type")
+  year            Int
+  totalEntitled   Float     @map("total_entitled")
+  used            Float     @default(0)
+  carriedForward  Float     @default(0) @map("carried_forward")
+  remaining       Float
+
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, leaveType, year])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id           String             @id @default(cuid())
+  employeeId   String             @map("employee_id")
+  leaveType    LeaveType          @map("leave_type")
+  startDate    DateTime           @map("start_date") @db.Date
+  endDate      DateTime           @map("end_date") @db.Date
+  totalDays    Float              @map("total_days")
+  isHalfDay    Boolean            @default(false) @map("is_half_day")
+  halfDayType  String?            @map("half_day_type")
+  reason       String
+  status       LeaveRequestStatus @default(PENDING)
+  reviewedBy   String?            @map("reviewed_by")
+  reviewedAt   DateTime?          @map("reviewed_at")
+  reviewNote   String?            @map("review_note")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+  reviewer User?    @relation("LeaveReviewer", fields: [reviewedBy], references: [id])
+
+  @@map("leave_requests")
+}
+
+model SalaryStructure {
+  id                 String    @id @default(cuid())
+  employeeId         String    @unique @map("employee_id")
+  basicSalary        String    @map("basic_salary")
+  hra                String?
+  da                 String?
+  specialAllowance   String?   @map("special_allowance")
+  medicalAllowance   String?   @map("medical_allowance")
+  transportAllowance String?   @map("transport_allowance")
+  grossSalary        String    @map("gross_salary")
+  effectiveFrom      DateTime  @map("effective_from") @db.Date
+  effectiveTo        DateTime? @map("effective_to") @db.Date
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("salary_structures")
+}
+
+model PayrollRun {
+  id              String        @id @default(cuid())
+  month           Int
+  year            Int
+  status          PayrollStatus @default(DRAFT)
+  totalEmployees  Int           @default(0) @map("total_employees")
+  totalGrossPay   String?       @map("total_gross_pay")
+  totalDeductions String?       @map("total_deductions")
+  totalNetPay     String?       @map("total_net_pay")
+  processedBy     String?       @map("processed_by")
+  processedAt     DateTime?     @map("processed_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  processor User?     @relation("PayrollProcessor", fields: [processedBy], references: [id])
+  payslips  Payslip[]
+
+  @@unique([month, year])
+  @@map("payroll_runs")
+}
+
+model Payslip {
+  id                 String    @id @default(cuid())
+  payrollRunId       String    @map("payroll_run_id")
+  employeeId         String    @map("employee_id")
+  month              Int
+  year               Int
+  basicPay           String    @map("basic_pay")
+  hra                String?
+  da                 String?
+  specialAllowance   String?   @map("special_allowance")
+  medicalAllowance   String?   @map("medical_allowance")
+  transportAllowance String?   @map("transport_allowance")
+  grossPay           String    @map("gross_pay")
+  pfEmployee         String?   @map("pf_employee")
+  pfEmployer         String?   @map("pf_employer")
+  esiEmployee        String?   @map("esi_employee")
+  esiEmployer        String?   @map("esi_employer")
+  professionalTax    String?   @map("professional_tax")
+  tds                String?
+  otherDeductions    String?   @map("other_deductions")
+  totalDeductions    String    @map("total_deductions")
+  netPay             String    @map("net_pay")
+  paidAt             DateTime? @map("paid_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id])
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@index([employeeId, year, month])
+  @@map("payslips")
 }
 
 model AuditLog {

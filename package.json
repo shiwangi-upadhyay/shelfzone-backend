@@ -16,6 +16,9 @@
     "type": "git",
     "url": "git+https://github.com/shiwangi-upadhyay/shelfzone-backend.git"
   },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
