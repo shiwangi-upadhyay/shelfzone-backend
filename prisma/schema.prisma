@@ -113,6 +113,7 @@ model User {
   agentSessions           AgentSession[]
   agentConfigChanges      AgentConfigLog[]
   commandLogs             CommandLog[]
+  createdApiKeys          AgentApiKey[]  @relation("ApiKeyCreator")
 
   @@map("users")
 }
@@ -453,6 +454,7 @@ model AgentRegistry {
   budgets        AgentBudget[]
   configLogs     AgentConfigLog[]
   leadOfTeams    AgentTeam[]      @relation("TeamLead")
+  apiKeys        AgentApiKey[]
 
   @@map("agent_registry")
 }
@@ -612,4 +614,27 @@ model CommandLog {
 
   @@index([userId, createdAt])
   @@map("command_log")
+}
+
+model AgentApiKey {
+  id         String    @id @default(cuid())
+  agentId    String    @map("agent_id")
+  keyHash    String    @unique @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  name       String
+  scopes     Json
+  isActive   Boolean   @default(true) @map("is_active")
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime? @map("expires_at")
+  createdBy  String    @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  // Relations
+  agent   AgentRegistry @relation(fields: [agentId], references: [id])
+  creator User          @relation("ApiKeyCreator", fields: [createdBy], references: [id])
+
+  @@index([agentId])
+  @@index([keyPrefix])
+  @@map("agent_api_keys")
 }

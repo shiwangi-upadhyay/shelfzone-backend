@@ -24,6 +24,7 @@ import costRoutes from './modules/agent-portal/costs/cost.routes.js';
 import budgetRoutes from './modules/agent-portal/budgets/budget.routes.js';
 import configRoutes from './modules/agent-portal/config/config.routes.js';
 import commandRoutes from './modules/agent-portal/commands/command.routes.js';
+import apiKeyRoutes from './modules/agent-portal/api-keys/api-key.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -57,6 +58,7 @@ await app.register(costRoutes);
 await app.register(budgetRoutes);
 await app.register(configRoutes);
 await app.register(commandRoutes);
+await app.register(apiKeyRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
