@@ -30,5 +30,24 @@ model User {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
+  // Encrypted PII fields (AES-256-GCM)
+  encryptedAadhaar String? @map("encrypted_aadhaar")
+  encryptedPan     String? @map("encrypted_pan")
+  encryptedSalary  String? @map("encrypted_salary")
+
   @@map("users")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  details    Json?
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
 }
