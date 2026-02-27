@@ -2,6 +2,14 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { RegisterSchema, LoginSchema, RefreshSchema } from './auth.schemas.js';
 import * as authService from './auth.service.js';
 import { Role } from '@prisma/client';
+import { logAudit } from '../../lib/audit.js';
+
+function getClientInfo(request: FastifyRequest) {
+  return {
+    ipAddress: request.ip,
+    userAgent: request.headers['user-agent'] ?? null,
+  };
+}
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -23,6 +31,14 @@ export async function registerHandler(request: FastifyRequest, reply: FastifyRep
       parsed.data.password,
       parsed.data.role as Role | undefined,
     );
+    logAudit({
+      userId: request.user?.userId,
+      action: 'REGISTER',
+      resource: 'user',
+      resourceId: user.id,
+      details: { email: parsed.data.email, role: parsed.data.role ?? 'EMPLOYEE' },
+      ...getClientInfo(request),
+    });
     return reply.status(201).send({ user });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'EMAIL_EXISTS') {
@@ -41,10 +57,23 @@ export async function loginHandler(request: FastifyRequest, reply: FastifyReply)
 
   try {
     const result = await authService.login(parsed.data.email, parsed.data.password);
+    logAudit({
+      userId: result.user.id,
+      action: 'LOGIN_SUCCESS',
+      resource: 'auth',
+      details: { email: parsed.data.email },
+      ...getClientInfo(request),
+    });
     reply.setCookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
     return reply.send({ user: result.user, accessToken: result.accessToken });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'INVALID_CREDENTIALS') {
+      logAudit({
+        action: 'LOGIN_FAILED',
+        resource: 'auth',
+        details: { email: parsed.data.email },
+        ...getClientInfo(request),
+      });
       return reply.status(401).send({ error: 'Invalid credentials' });
     }
     throw err;
@@ -62,6 +91,11 @@ export async function refreshHandler(request: FastifyRequest, reply: FastifyRepl
 
   try {
     const result = await authService.refresh(refreshToken);
+    logAudit({
+      action: 'TOKEN_REFRESH',
+      resource: 'auth',
+      ...getClientInfo(request),
+    });
     reply.setCookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
     return reply.send({ accessToken: result.accessToken });
   } catch {
@@ -72,6 +106,12 @@ export async function refreshHandler(request: FastifyRequest, reply: FastifyRepl
 export async function logoutHandler(request: FastifyRequest, reply: FastifyReply) {
   const userId = request.user!.userId;
   await authService.logout(userId);
+  logAudit({
+    userId,
+    action: 'LOGOUT',
+    resource: 'auth',
+    ...getClientInfo(request),
+  });
   reply.clearCookie('refreshToken', { path: '/' });
   return reply.send({ message: 'Logged out' });
 }
