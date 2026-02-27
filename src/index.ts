@@ -16,6 +16,15 @@ import reportRoutes from './modules/reports/report.routes.js';
 import payrollRoutes from './modules/payroll/payroll.routes.js';
 import selfServiceRoutes from './modules/self-service/self-service.routes.js';
 import notificationRoutes from './modules/notifications/notification.routes.js';
+import agentRoutes from './modules/agent-portal/agents/agent.routes.js';
+import teamRoutes from './modules/agent-portal/teams/team.routes.js';
+import analyticsRoutes from './modules/agent-portal/analytics/analytics.routes.js';
+import sessionLogRoutes from './modules/agent-portal/session-logs/session-log.routes.js';
+import costRoutes from './modules/agent-portal/costs/cost.routes.js';
+import budgetRoutes from './modules/agent-portal/budgets/budget.routes.js';
+import configRoutes from './modules/agent-portal/config/config.routes.js';
+import commandRoutes from './modules/agent-portal/commands/command.routes.js';
+import apiKeyRoutes from './modules/agent-portal/api-keys/api-key.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -39,6 +48,17 @@ await app.register(reportRoutes);
 await app.register(payrollRoutes);
 await app.register(selfServiceRoutes);
 await app.register(notificationRoutes);
+
+// Agent Portal
+await app.register(agentRoutes);
+await app.register(teamRoutes);
+await app.register(analyticsRoutes);
+await app.register(sessionLogRoutes);
+await app.register(costRoutes);
+await app.register(budgetRoutes);
+await app.register(configRoutes);
+await app.register(commandRoutes);
+await app.register(apiKeyRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
