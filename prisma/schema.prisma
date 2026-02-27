@@ -41,6 +41,30 @@ enum LeaveRequestStatus {
   CANCELLED
 }
 
+enum PayrollStatus {
+  DRAFT
+  PROCESSING
+  COMPLETED
+  CANCELLED
+}
+
+enum PayComponent {
+  BASIC
+  HRA
+  DA
+  SPECIAL_ALLOWANCE
+  MEDICAL
+  TRANSPORT
+  PF_EMPLOYEE
+  PF_EMPLOYER
+  ESI_EMPLOYEE
+  ESI_EMPLOYER
+  PROFESSIONAL_TAX
+  TDS
+  OTHER_DEDUCTION
+  OTHER_ALLOWANCE
+}
+
 enum EmployeeStatus {
   ACTIVE
   INACTIVE
@@ -63,6 +87,7 @@ model User {
   managedDepartments      Department[]       @relation("DepartmentManager")
   regularizedAttendances  AttendanceRecord[] @relation("AttendanceRegularizer")
   reviewedLeaveRequests   LeaveRequest[]     @relation("LeaveReviewer")
+  processedPayrolls       PayrollRun[]       @relation("PayrollProcessor")
 
   @@map("users")
 }
@@ -127,6 +152,8 @@ model Employee {
   attendanceSummaries  AttendanceSummary[]
   leaveBalances        LeaveBalance[]
   leaveRequests        LeaveRequest[]
+  salaryStructure      SalaryStructure?
+  payslips             Payslip[]
 
   @@map("employees")
 }
@@ -239,6 +266,85 @@ model LeaveRequest {
   reviewer User?    @relation("LeaveReviewer", fields: [reviewedBy], references: [id])
 
   @@map("leave_requests")
+}
+
+model SalaryStructure {
+  id                 String    @id @default(cuid())
+  employeeId         String    @unique @map("employee_id")
+  basicSalary        String    @map("basic_salary")
+  hra                String?
+  da                 String?
+  specialAllowance   String?   @map("special_allowance")
+  medicalAllowance   String?   @map("medical_allowance")
+  transportAllowance String?   @map("transport_allowance")
+  grossSalary        String    @map("gross_salary")
+  effectiveFrom      DateTime  @map("effective_from") @db.Date
+  effectiveTo        DateTime? @map("effective_to") @db.Date
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@map("salary_structures")
+}
+
+model PayrollRun {
+  id              String        @id @default(cuid())
+  month           Int
+  year            Int
+  status          PayrollStatus @default(DRAFT)
+  totalEmployees  Int           @default(0) @map("total_employees")
+  totalGrossPay   String?       @map("total_gross_pay")
+  totalDeductions String?       @map("total_deductions")
+  totalNetPay     String?       @map("total_net_pay")
+  processedBy     String?       @map("processed_by")
+  processedAt     DateTime?     @map("processed_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  processor User?     @relation("PayrollProcessor", fields: [processedBy], references: [id])
+  payslips  Payslip[]
+
+  @@unique([month, year])
+  @@map("payroll_runs")
+}
+
+model Payslip {
+  id                 String    @id @default(cuid())
+  payrollRunId       String    @map("payroll_run_id")
+  employeeId         String    @map("employee_id")
+  month              Int
+  year               Int
+  basicPay           String    @map("basic_pay")
+  hra                String?
+  da                 String?
+  specialAllowance   String?   @map("special_allowance")
+  medicalAllowance   String?   @map("medical_allowance")
+  transportAllowance String?   @map("transport_allowance")
+  grossPay           String    @map("gross_pay")
+  pfEmployee         String?   @map("pf_employee")
+  pfEmployer         String?   @map("pf_employer")
+  esiEmployee        String?   @map("esi_employee")
+  esiEmployer        String?   @map("esi_employer")
+  professionalTax    String?   @map("professional_tax")
+  tds                String?
+  otherDeductions    String?   @map("other_deductions")
+  totalDeductions    String    @map("total_deductions")
+  netPay             String    @map("net_pay")
+  paidAt             DateTime? @map("paid_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id])
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@index([employeeId, year, month])
+  @@map("payslips")
 }
 
 model AuditLog {
