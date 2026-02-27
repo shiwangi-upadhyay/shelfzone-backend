@@ -89,7 +89,39 @@ model User {
   reviewedLeaveRequests   LeaveRequest[]     @relation("LeaveReviewer")
   processedPayrolls       PayrollRun[]       @relation("PayrollProcessor")
 
+  notifications           Notification[]
+
   @@map("users")
+}
+
+enum NotificationType {
+  LEAVE_APPLIED
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+  LEAVE_CANCELLED
+  ATTENDANCE_REGULARIZED
+  PAYSLIP_GENERATED
+  PROFILE_UPDATED
+  SYSTEM_ANNOUNCEMENT
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false) @map("is_read")
+  readAt    DateTime?        @map("read_at")
+  metadata  Json?
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
 }
 
 model Department {
