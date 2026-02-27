@@ -24,7 +24,7 @@ export const applyLeaveSchema = z.object({
 
 export const reviewLeaveSchema = z.object({
   status: z.enum(['APPROVED', 'REJECTED']),
-  reviewNote: z.string().max(1000).trim().optional(),
+  reviewNote: z.string().max(500).trim().optional(),
 });
 
 export const leaveParamsSchema = z.object({
