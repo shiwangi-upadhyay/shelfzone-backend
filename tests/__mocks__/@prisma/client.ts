@@ -53,3 +53,20 @@ export enum PayrollStatus {
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
 }
+
+export enum NotificationType {
+  INFO = 'INFO',
+  SUCCESS = 'SUCCESS',
+  WARNING = 'WARNING',
+  ERROR = 'ERROR',
+  LEAVE_REQUEST = 'LEAVE_REQUEST',
+  LEAVE_APPROVED = 'LEAVE_APPROVED',
+  LEAVE_REJECTED = 'LEAVE_REJECTED',
+  PAYSLIP_GENERATED = 'PAYSLIP_GENERATED',
+  ATTENDANCE_ALERT = 'ATTENDANCE_ALERT',
+  SYSTEM = 'SYSTEM',
+}
+
+export type Prisma = {
+  InputJsonValue: any;
+};
