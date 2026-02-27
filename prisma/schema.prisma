@@ -30,5 +30,10 @@ model User {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
+  // Encrypted PII fields (AES-256-GCM)
+  encryptedAadhaar String? @map("encrypted_aadhaar")
+  encryptedPan     String? @map("encrypted_pan")
+  encryptedSalary  String? @map("encrypted_salary")
+
   @@map("users")
 }
