@@ -30,12 +30,71 @@ model User {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  // Encrypted PII fields (AES-256-GCM)
-  encryptedAadhaar String? @map("encrypted_aadhaar")
-  encryptedPan     String? @map("encrypted_pan")
-  encryptedSalary  String? @map("encrypted_salary")
+  // Relations
+  employee         Employee?
+  managedDepartments Department[] @relation("DepartmentManager")
 
   @@map("users")
+}
+
+model Department {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  managerId   String?  @map("manager_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  manager   User?      @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees Employee[]
+
+  @@map("departments")
+}
+
+model Designation {
+  id          String   @id @default(cuid())
+  title       String   @unique
+  level       Int
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  employees Employee[]
+
+  @@map("designations")
+}
+
+model Employee {
+  id              String         @id @default(cuid())
+  employeeCode    String         @unique @map("employee_code")
+  userId          String         @unique @map("user_id")
+  departmentId    String         @map("department_id")
+  designationId   String         @map("designation_id")
+  firstName       String         @map("first_name")
+  lastName        String         @map("last_name")
+  phone           String?
+  encryptedAadhaar String?       @map("encrypted_aadhaar")
+  encryptedPan     String?       @map("encrypted_pan")
+  encryptedSalary  String?       @map("encrypted_salary")
+  dateOfJoining   DateTime       @map("date_of_joining")
+  dateOfLeaving   DateTime?      @map("date_of_leaving")
+  status          EmployeeStatus @default(ACTIVE)
+  managerId       String?        @map("manager_id")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  user          User        @relation(fields: [userId], references: [id])
+  department    Department  @relation(fields: [departmentId], references: [id])
+  designation   Designation @relation(fields: [designationId], references: [id])
+  manager       Employee?   @relation("EmployeeHierarchy", fields: [managerId], references: [id])
+  directReports Employee[]  @relation("EmployeeHierarchy")
+
+  @@map("employees")
 }
 
 model AuditLog {
