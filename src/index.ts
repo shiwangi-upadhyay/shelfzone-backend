@@ -11,6 +11,7 @@ import designationRoutes from './modules/designations/designation.routes.js';
 import employeeRoutes from './modules/employees/employee.routes.js';
 import attendanceRoutes from './modules/attendance/attendance.routes.js';
 import leaveRoutes from './modules/leave/leave.routes.js';
+import leaveAdminRoutes from './modules/leave-admin/leave-admin.routes.js';
 import reportRoutes from './modules/reports/report.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
@@ -30,6 +31,7 @@ await app.register(designationRoutes);
 await app.register(employeeRoutes);
 await app.register(attendanceRoutes);
 await app.register(leaveRoutes);
+await app.register(leaveAdminRoutes);
 await app.register(reportRoutes);
 
 app.get('/health', async () => ({
