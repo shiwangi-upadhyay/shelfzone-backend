@@ -6,6 +6,7 @@ import rateLimit from '@fastify/rate-limit';
 import { env } from './config/env.js';
 import { globalRateLimitConfig } from './config/rate-limit.js';
 import authRoutes from './modules/auth/auth.routes.js';
+import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
 
@@ -13,6 +14,10 @@ await app.register(cors);
 await app.register(helmet);
 await app.register(cookie);
 await app.register(rateLimit, globalRateLimitConfig);
+
+// Global input sanitization
+app.addHook('preHandler', sanitizeBody);
+
 await app.register(authRoutes);
 
 app.get('/health', async () => ({
