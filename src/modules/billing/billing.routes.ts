@@ -8,8 +8,16 @@ import {
   invoicesHandler,
   exportHandler,
 } from './billing.controller.js';
+import { ingestHandler } from './ingest.controller.js';
 
 export default async function billingRoutes(app: FastifyInstance) {
+  // Ingestion endpoint — authenticated users can push usage data
+  app.post(
+    '/api/billing/ingest',
+    { preHandler: [authenticate] },
+    ingestHandler,
+  );
+
   app.get(
     '/api/billing/summary',
     { preHandler: [authenticate] },
