@@ -1,11 +1,20 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { instructSchema, traceParamsSchema } from './gateway.schemas.js';
 import * as gatewayService from './gateway.service.js';
+import { getUserDecryptedKey } from '../api-keys/api-key.service.js';
 
 export async function instructHandler(request: FastifyRequest, reply: FastifyReply) {
   const parsed = instructSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.status(400).send({ error: 'Validation Error', message: parsed.error.issues[0].message });
+  }
+
+  // Check API key BEFORE creating trace (unless simulation mode)
+  if (process.env.USE_SIMULATION !== 'true') {
+    const apiKey = await getUserDecryptedKey(request.user!.userId);
+    if (!apiKey) {
+      return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
+    }
   }
 
   try {
@@ -15,10 +24,16 @@ export async function instructHandler(request: FastifyRequest, reply: FastifyRep
       parsed.data.masterAgentId,
     );
 
-    // Kick off async simulation (fire-and-forget)
-    gatewayService.simulateAgentWork(traceId, sessionId, agentId).catch((err) => {
-      console.error('Simulation failed:', err);
-    });
+    // Use real Anthropic API unless USE_SIMULATION=true
+    if (process.env.USE_SIMULATION === 'true') {
+      gatewayService.simulateAgentWork(traceId, sessionId, agentId).catch((err) => {
+        console.error('Simulation failed:', err);
+      });
+    } else {
+      gatewayService.executeRealAnthropicCall(traceId, sessionId, agentId, request.user!.userId, parsed.data.instruction).catch((err) => {
+        console.error('Anthropic API call failed:', err);
+      });
+    }
 
     return reply.status(201).send({ data: { traceId, sessionId } });
   } catch (err: unknown) {
@@ -43,12 +58,16 @@ export async function streamHandler(request: FastifyRequest, reply: FastifyReply
     return reply.status(e.statusCode ?? 500).send({ error: e.error ?? 'Internal Error', message: e.message });
   }
 
-  reply.raw.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
+  // Use Fastify headers so CORS plugin adds its headers, then go raw for streaming
+  const origin = request.headers.origin || '*';
+  reply
+    .header('Content-Type', 'text/event-stream')
+    .header('Cache-Control', 'no-cache')
+    .header('Connection', 'keep-alive')
+    .header('X-Accel-Buffering', 'no')
+    .header('Access-Control-Allow-Origin', origin)
+    .header('Access-Control-Allow-Credentials', 'true');
+  reply.raw.writeHead(200, reply.getHeaders() as any);
 
   let lastTimestamp: Date | undefined;
   let completed = false;
@@ -75,7 +94,7 @@ export async function streamHandler(request: FastifyRequest, reply: FastifyReply
           durationMs: event.durationMs,
           metadata: event.metadata,
         });
-        reply.raw.write(`event: ${event.type}\ndata: ${payload}\n\n`);
+        reply.raw.write(`data: ${payload}\n\n`);
         lastTimestamp = event.timestamp;
 
         if (event.type === 'trace:completed') {
