@@ -979,3 +979,317 @@
 - feature/phase-4-agent-portal branch ready for review
 - All code committed and pushed
 - Awaiting approval for: develop → testing → main
+
+---
+
+## Phase 7 — AgentTrace (Agent Observability Platform)
+
+### Overview
+Full-stack agent observability with 4 UI levels (Agent Map, Agent Detail Panel, Task Trace Flow, Raw Logs), distributed tracing, cost attribution, and flow reconstruction for complete visibility into agent execution.
+
+### [7.1] Data Model & Schema
+- **Agent:** DataArchitect
+- **Status:** ✅ Complete
+- **Output:**
+  - `prisma/schema.prisma` — 3 new tables:
+    - **TraceSession:** id, sessionId, agentId (FK), userId (FK), startTime, endTime, durationMs, status (enum: ACTIVE/COMPLETED/FAILED), costEstimate, metadata
+    - **TaskTrace:** id, sessionId (FK), taskId, parentTaskId (nullable FK), taskName, status (enum: PENDING/RUNNING/COMPLETED/FAILED), startTime, endTime, durationMs, inputTokens, outputTokens, cost, model, metadata
+    - **SessionEvent:** id, sessionId (FK), eventType (enum: SPAN_START/SPAN_END/LOG/METRIC/ERROR), timestamp, payload (JSON), severity (enum: DEBUG/INFO/WARN/ERROR), source
+  - `prisma/migrations/0007_agent_trace_schema/migration.sql` — Migration SQL
+- **Relations:**
+  - TraceSession → Agent (many-to-one)
+  - TraceSession → User (many-to-one)
+  - TaskTrace → TraceSession (many-to-one)
+  - TaskTrace → TaskTrace (self-referential parent)
+  - SessionEvent → TraceSession (many-to-one)
+- **Indexes:**
+  - TraceSession: (agentId, startTime DESC), (userId, startTime DESC)
+  - TaskTrace: (sessionId, startTime DESC), (status)
+  - SessionEvent: (sessionId, timestamp DESC), (eventType)
+- **Verified:** `prisma generate` succeeds, relations validated, indexes on critical columns for query performance
+- **Decisions:**
+  - Sessions cluster traces into logical units (user's agent interaction)
+  - TaskTrace hierarchy allows nested operation tracking (parent-child relationships)
+  - Events are immutable (append-only audit trail)
+  - Cost calculated per-task (enables cost attribution at granular level)
+  - Metadata fields (JSON) allow extensibility without schema migrations
+- **Unblocks:** All observability endpoints, cost analysis, flow reconstruction
+
+### [7.2–7.18] API Endpoints (17 Total)
+
+#### Traces Endpoints (5)
+- `POST /api/traces/sessions` — Create new trace session
+  - Body: `{ agentId, userId, metadata? }`
+  - Returns: `{ sessionId, startTime }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+  
+- `GET /api/traces/sessions` — List all sessions (paginated)
+  - Query: `{ page?, limit?, agentId?, status?, startDate?, endDate? }`
+  - Returns: `{ data: TraceSession[], pagination }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER (own agents only)
+  
+- `GET /api/traces/sessions/:sessionId` — Get single session with full task tree
+  - Returns: `{ session, tasks[], events[], flowGraph }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+  
+- `POST /api/traces/tasks` — Log task start (create TaskTrace)
+  - Body: `{ sessionId, taskId, taskName, parentTaskId?, model?, metadata? }`
+  - Returns: `{ traceId }`
+  - RBAC: Service-to-service (Agent Runtime)
+  
+- `PUT /api/traces/tasks/:traceId/complete` — Log task completion
+  - Body: `{ status, endTime, inputTokens, outputTokens, cost?, metadata? }`
+  - Returns: `{ completed }`
+  - RBAC: Service-to-service (Agent Runtime)
+
+#### Sessions Endpoints (3)
+- `GET /api/traces/sessions/:sessionId/timeline` — Task timeline for session
+  - Returns: `{ events: [{ time, task, duration, status }], totalDuration }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+  
+- `PUT /api/traces/sessions/:sessionId/complete` — Mark session complete
+  - Body: `{ status, endTime, finalCost }`
+  - Returns: `{ completed }`
+  - RBAC: Service-to-service (Agent Runtime)
+  
+- `GET /api/traces/sessions/:sessionId/flow` — Reconstruct execution flow
+  - Returns: `{ flowGraph: DAG, metrics }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+
+#### Events Endpoints (2)
+- `POST /api/traces/events` — Log event (span, metric, error, log)
+  - Body: `{ sessionId, eventType, severity?, payload, source? }`
+  - Returns: `{ eventId }`
+  - RBAC: Service-to-service (Agent Runtime)
+  
+- `GET /api/traces/sessions/:sessionId/events` — List events for session
+  - Query: `{ eventType?, severity?, offset?, limit? }`
+  - Returns: `{ events, total }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+
+#### Analytics Endpoints (4)
+- `GET /api/traces/analytics/cost` — Cost breakdown by agent, model, time
+  - Query: `{ agentId?, period: "7d|30d|90d", breakdown: "agent|model|hour" }`
+  - Returns: `{ totalCost, costByCategory[], trends }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, FINANCE
+  
+- `GET /api/traces/analytics/performance` — Latency, throughput, errors
+  - Query: `{ agentId?, period }`
+  - Returns: `{ avgLatency, p99Latency, throughput, errorRate, successRate }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+  
+- `GET /api/traces/analytics/tokens` — Token usage by model
+  - Query: `{ agentId?, period }`
+  - Returns: `{ totalTokens, inputTokens, outputTokens, byModel[] }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+  
+- `GET /api/traces/analytics/health` — Agent health scores
+  - Query: `{ period }`
+  - Returns: `{ agents[], healthScore (0-100), alerting[] }`
+  - RBAC: SUPER_ADMIN, HR_ADMIN, MANAGER
+
+#### Real-Time Endpoints (3)
+- `GET /api/traces/live/sessions` — WebSocket: stream active sessions
+  - Connection: WebSocket upgrade on `/api/traces/live/sessions`
+  - Publishes: new sessions, session completion, cost updates
+  - RBAC: SUPER_ADMIN, HR_ADMIN
+  
+- `GET /api/traces/live/agent/:agentId` — WebSocket: stream agent's active tasks
+  - Connection: WebSocket upgrade on `/api/traces/live/agent/:agentId`
+  - Publishes: task start, task completion, errors, metrics
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+  
+- `GET /api/traces/live/tasks/:sessionId` — WebSocket: stream session's task tree
+  - Connection: WebSocket upgrade on `/api/traces/live/tasks/:sessionId`
+  - Publishes: task hierarchy updates, real-time flow
+  - RBAC: SUPER_ADMIN, HR_ADMIN, AGENT_OWNER
+
+### [7.3] Backend Services (3)
+
+#### Trace Service
+- `src/modules/traces/trace.service.ts`
+- Responsibilities:
+  - Session lifecycle management (create, complete, query)
+  - Task tree construction and traversal
+  - Event append (immutable insertion)
+  - Flow reconstruction from task tree + events
+  - Timestamp validation and duration calculation
+- Key Functions:
+  - `createSession(agentId, userId, metadata)` → sessionId
+  - `logTask(sessionId, taskId, taskName, parentTaskId, model)` → traceId
+  - `completeTask(traceId, status, durationMs, inputTokens, outputTokens, cost)` → void
+  - `getSessionFlow(sessionId)` → DAG (directed acyclic graph)
+  - `getTaskTree(sessionId)` → TreeNode[]
+  - `appendEvent(sessionId, eventType, payload, severity)` → eventId
+- **Verified:** Timestamp ordering enforced, parent-child hierarchy validated, cycles prevented
+
+#### Cost Service
+- `src/lib/trace-cost-aggregator.ts`
+- Responsibilities:
+  - Real-time cost aggregation (sum by agent/model/period)
+  - Cost attribution to tasks and sessions
+  - Period-based rollup (daily, weekly, monthly)
+  - Budget integration (flag overages)
+- Key Functions:
+  - `getCostBreakdown(agentId, period)` → { totalCost, byModel[] }
+  - `aggregateCost(sessionId)` → totalCost
+  - `calculateTaskCost(inputTokens, outputTokens, model)` → cost
+- **Formula:** Uses cost-calculator.ts rates (Opus $15/$75, Sonnet $3/$15, Haiku $0.25/$1.25)
+- **Verified:** Cost calculations match agent-portal costs, no double-counting
+
+#### Flow Service
+- `src/modules/traces/flow.service.ts`
+- Responsibilities:
+  - DAG reconstruction from task hierarchy
+  - Topological sorting for UI rendering
+  - Dependency analysis (which tasks blocked which)
+  - Critical path analysis
+  - Performance bottleneck identification
+- Key Functions:
+  - `reconstructFlow(sessionId)` → { nodes, edges, criticalPath, bottlenecks }
+  - `getTaskDependencies(taskId)` → taskIds[]
+  - `identifyBottlenecks(sessionId)` → { task, reason }
+  - `topologicalSort(nodes)` → orderedNodes
+- **Verified:** DAG acyclicity enforced, critical path calculation correct
+
+### [7.4] Security & Authorization
+
+#### Auth Middleware
+- `src/middleware/trace-auth.middleware.ts`
+- Validates ownership before returning traces:
+  - SUPER_ADMIN/HR_ADMIN: see all agents' traces
+  - AGENT_OWNER: see own agent's traces only
+  - MANAGER: see own team's agents' traces
+  - EMPLOYEE: see own execution traces only
+- Returns 403 if access denied
+- Verified: Ownership checks prevent cross-team trace leakage
+
+#### Redaction Service
+- `src/lib/trace-redaction.ts`
+- Capabilities:
+  - Redact PII from task metadata (names, emails, phone)
+  - Redact sensitive payloads (passwords, tokens, API keys)
+  - Audit logging for redaction operations (who redacted, when, reason)
+  - Reversible redaction for audit trails (flag, but preserve hash for link verification)
+- Applied to: task metadata, event payloads, session metadata
+- Rules:
+  - Regex pattern matching for SSN, email, phone, API keys
+  - Null-sensitive fields if PII detected (unless user has COMPLIANCE_AUDIT role)
+- **Verified:** PII patterns detected, redaction reversible for audits
+
+#### Rate Limiting
+- `src/middleware/trace-rate-limit.middleware.ts`
+- Per-agent limits:
+  - 1000 task logs/minute (per agent)
+  - 100 event logs/minute (per session)
+  - 50 session creations/minute (per user)
+- Returns 429 if exceeded
+- **Verified:** Sliding window enforced, headers accurate
+
+#### Audit Logging
+- All trace operations logged to AuditLog table:
+  - Session creation/completion
+  - Task logging with token counts (not full payloads)
+  - Redaction operations
+  - Queries and exports
+- Fire-and-forget pattern (non-blocking)
+- **Verified:** All mutations logged, no audit gaps
+
+### [7.5] Testing (23 Tests Total)
+
+#### Unit Tests (8)
+- Cost aggregation: correct summation, period rollup, edge cases
+- Flow reconstruction: DAG acyclicity, topological sort correctness
+- Redaction: PII pattern matching, reversibility, audit trail
+- Cost calculator: all models, edge cases (zero tokens, unknown model)
+
+#### Integration Tests (10)
+- Session lifecycle: create → tasks → complete → retrieve
+- Task hierarchy: parent-child relationships, cycle prevention
+- Event streaming: ordering, filtering, pagination
+- Flow reconstruction: complex nested tasks, parallel execution
+- Ownership validation: RBAC enforcement, cross-team prevention
+- Cost aggregation: per-session, per-task, per-agent accuracy
+
+#### Security Tests (5)
+- PII redaction: patterns detected, sensitive fields masked
+- Authorization: ownership checks, role-based access
+- Rate limiting: sliding window accuracy, 429 responses
+- Audit trail: all mutations captured, tampering prevention
+- WebSocket auth: valid token required, connection rejected for unauthorized
+
+### [7.6] UI Integration (UIcraft)
+
+#### Components (17)
+- **Agent Map** (3 components):
+  - `AgentMapCanvas` — Viz.js rendering of agent network
+  - `AgentNode` — Interactive node with cost + status
+  - `MapControls` — Zoom, filter by status, search
+
+- **Agent Detail Panel** (4 components):
+  - `AgentDetailHeader` — Agent name, status, cost YTD
+  - `CostBreakdown` — Pie chart by model, trend sparkline
+  - `PerformanceMetrics` — Latency, throughput, error rate gauges
+  - `HealthScore` — Composite score with factor breakdown
+
+- **Task Trace Flow** (6 components):
+  - `TaskFlowCanvas` — ReactFlow rendering of DAG
+  - `TaskNode` — Task duration, tokens, status, cost
+  - `TaskEdge` — Dependency arrow with timing info
+  - `TaskTimeline` — Gantt chart of execution timeline
+  - `FlowLegend` — Status color coding
+  - `FlowControls` — Auto-layout, zoom, fit-to-view
+
+- **Raw Logs** (2 components):
+  - `EventTable` — Searchable, sortable event log
+  - `EventDetail` — Full payload viewer with syntax highlighting
+
+- **Common** (2 components):
+  - `TraceModeSwitcher` — Toggle between 4 UI levels
+  - `ExportModal` — Export traces as JSON/CSV
+
+#### Hooks (6)
+- `useTraceSession()` — Fetch session, handle loading/error, auto-refresh
+- `useTaskFlow()` — Reconstruct and render flow, handle updates
+- `useLiveSession()` — WebSocket subscription to live session updates
+- `useCostBreakdown()` — Aggregate cost by model/period
+- `useEventStream()` — Stream events with filtering
+- `useTraceSearch()` — Full-text search across traces
+
+#### Pages (2)
+- `/traces` — List sessions with filtering (agent, status, date range)
+- `/traces/:sessionId` — Detail view with 4-level UI switcher
+
+### [7.7] Documentation & Build Log
+
+#### API Documentation
+- `docs/agent-trace-api.md` — Full reference for 17 endpoints
+  - For each endpoint: method, path, auth, request/response, example
+  - Grouped by: Traces, Sessions, Events, Analytics, Real-time
+  - RBAC matrix for all endpoints
+  - Error responses and examples
+  - WebSocket connection guide
+
+#### Architecture Documentation
+- `docs/agent-trace-architecture.md` — Architecture overview
+  - Data model diagram (text-based)
+  - 4 UI levels explained with screenshots/examples
+  - Trace capture flow (how events are logged)
+  - Cost aggregation flow (real-time calculation)
+  - Flow reconstruction logic (DAG building)
+  - Security model (ownership, redaction, rate limiting)
+
+#### Build Log Updates
+- Phase 7 entry with all 7.1–7.7 sections
+- Endpoints list (17 total with paths/methods)
+- Services overview (Trace, Cost, Flow)
+- Testing summary (23 tests)
+- UI component inventory (17 components, 6 hooks, 2 pages)
+
+### Phase 7 — Merge History
+- feature/phase-7-agent-trace branch ready for review
+- All code committed and pushed
+- Test coverage: 23 tests, all passing
+- TypeScript strict mode: zero errors
+- ESLint: zero new violations
+- Awaiting approval for: develop → testing → main
