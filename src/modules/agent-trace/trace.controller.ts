@@ -229,7 +229,7 @@ export async function streamTraceEventsHandler(request: FastifyRequest, reply: F
     .header('X-Accel-Buffering', 'no')
     .header('Access-Control-Allow-Origin', origin)
     .header('Access-Control-Allow-Credentials', 'true');
-  reply.raw.writeHead(200, reply.getHeaders());
+  reply.raw.writeHead(200, reply.getHeaders() as any);
 
   reply.raw.write('data: {"type":"connected"}\n\n');
 
