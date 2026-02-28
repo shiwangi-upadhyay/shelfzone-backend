@@ -43,12 +43,16 @@ export async function streamHandler(request: FastifyRequest, reply: FastifyReply
     return reply.status(e.statusCode ?? 500).send({ error: e.error ?? 'Internal Error', message: e.message });
   }
 
-  reply.raw.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no',
-  });
+  // Use Fastify headers so CORS plugin adds its headers, then go raw for streaming
+  const origin = request.headers.origin || '*';
+  reply
+    .header('Content-Type', 'text/event-stream')
+    .header('Cache-Control', 'no-cache')
+    .header('Connection', 'keep-alive')
+    .header('X-Accel-Buffering', 'no')
+    .header('Access-Control-Allow-Origin', origin)
+    .header('Access-Control-Allow-Credentials', 'true');
+  reply.raw.writeHead(200, reply.getHeaders());
 
   let lastTimestamp: Date | undefined;
   let completed = false;
