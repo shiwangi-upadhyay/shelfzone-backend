@@ -65,7 +65,7 @@ export async function loginHandler(request: FastifyRequest, reply: FastifyReply)
       ...getClientInfo(request),
     });
     reply.setCookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
-    return reply.send({ user: result.user, accessToken: result.accessToken });
+    return reply.send({ user: result.user, accessToken: result.accessToken, refreshToken: result.refreshToken });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === 'INVALID_CREDENTIALS') {
       logAudit({
@@ -97,7 +97,7 @@ export async function refreshHandler(request: FastifyRequest, reply: FastifyRepl
       ...getClientInfo(request),
     });
     reply.setCookie('refreshToken', result.refreshToken, COOKIE_OPTIONS);
-    return reply.send({ accessToken: result.accessToken });
+    return reply.send({ accessToken: result.accessToken, refreshToken: result.refreshToken });
   } catch {
     return reply.status(401).send({ error: 'Invalid refresh token' });
   }

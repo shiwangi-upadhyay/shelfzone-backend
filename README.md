@@ -14,6 +14,25 @@ API server for the ShelfZone HR + Agent Management Platform.
 - **Queue:** BullMQ
 - **AI:** Anthropic SDK + LangChain.js
 
+## AgentTrace — Agent Observability Platform
+
+Full-stack agent observability with distributed tracing, cost attribution, and execution flow reconstruction.
+
+### Features
+
+- **4 UI Levels:** Agent Map (network overview) → Agent Detail (performance) → Task Flow (execution DAG) → Raw Logs (event-level debugging)
+- **Distributed Tracing:** Session-based trace grouping with hierarchical task trees
+- **Real-Time Cost Attribution:** Per-task cost calculation with aggregation by agent, model, and time period
+- **Flow Reconstruction:** DAG visualization with critical path analysis and bottleneck identification
+- **Security:** Ownership-based access control, PII redaction, rate limiting, audit trail
+- **Analytics:** Cost breakdowns, performance metrics, token usage, health scoring
+- **WebSocket Real-Time:** Live session streaming, agent activity feed, task tree updates
+
+### Documentation
+
+- **API Reference:** [`docs/agent-trace-api.md`](docs/agent-trace-api.md) — 17 endpoints with examples
+- **Architecture:** [`docs/agent-trace-architecture.md`](docs/agent-trace-architecture.md) — Data model, UI levels, trace capture, cost aggregation, security model
+
 ## Prerequisites
 
 - Node.js 22+

@@ -1,99 +1,141 @@
-# Session Context — SHIWANGI
+# Session Context — Saved at 87% tokens
+## Date: 2026-02-28 14:48 UTC
 
 ## Identity
-I am **SHIWANGI** — Smart HR Intelligence Workflow Agent for Next-Gen Integration. Master agent of ShelfZone. I delegate to 7 specialized AI agents, verify, and report.
+- I am SHIWANGI — Master AI Agent for ShelfZone
+- Owner: Shiwangi Upadhyay (Boss)
+- My role: Take instructions from Boss, delegate to sub-agents, verify, report. I am an experienced full-stack developer but I DELEGATE, not build myself.
 
-## My Team
-| Agent | Model | Role |
-|-------|-------|------|
-| BackendForge | claude-opus-4-6 | Backend development |
-| DataArchitect | claude-opus-4-6 | DB & system design |
-| ShieldOps | claude-opus-4-6 | Security & DevOps |
-| PortalEngine | claude-opus-4-6 | Agent management portal |
-| UIcraft | claude-sonnet-4-5 | Frontend development |
-| TestRunner | claude-sonnet-4-5 | Testing |
-| DocSmith | claude-haiku-4-5 | Documentation |
+## Architecture Document
+- **Source:** /root/.openclaw/workspace/shelfzone-backend/docs/ShelfZone_Agent_Portal_v2_Architecture.docx
+- **This is the SINGLE SOURCE OF TRUTH for Agent Portal v2.0**
+- Read it FIRST before any work
 
-## Owner
-- **Name:** Shiwangi Upadhyay (Boss)
-- **Email:** shiwangiupadhyay332@gmail.com
-- **GitHub:** shiwangi-upadhyay
+## Critical Rules (NON-NEGOTIABLE)
+1. **NEVER push to main.** Feature branch → develop → testing → main. Ask Boss at EVERY merge.
+2. **Test everything yourself before reporting done.** Empty pages = NOT done.
+3. **Push after every commit.** No local-only work.
+4. **Save context at 70% tokens.**
+5. **Dual theme: light/dark/system** as it already exists.
 
-## Repos
-- **Backend:** https://github.com/shiwangi-upadhyay/shelfzone-backend.git
-- **Frontend:** https://github.com/shiwangi-upadhyay/shelfzone-web.git
-- **Git config:** shiwangiupadhyay332@gmail.com / shiwangi-upadhyay
-
-## Rules
-1. I do NOT build — I delegate to agents
-2. Every step logged in docs/build-log.md (DocSmith maintains)
-3. Every merge needs Boss's approval: feature → develop, develop → testing, testing → main
-4. **Every agent pushes after every commit. No local-only commits. Ever.**
-5. **Context Management Protocol:** At 85% tokens — stop, save context to docs/session-context.md, commit+push, alert Boss
-
-## Project Status — ALL ON MAIN ✅
+## Current State — What EXISTS
 
 ### Backend (shelfzone-backend)
-- **Stack:** Fastify 5 + Prisma 7 + PostgreSQL + TypeScript ESM
-- **L0 Foundation:** ✅ Shipped — repos, scaffold, Docker Compose, health endpoints
-- **L1 Identity:** ✅ Shipped — Users, JWT auth, register/login/refresh/logout
-- **L2 Permission:** ✅ Shipped — RBAC, RLS, AES-256-GCM encryption, audit log, rate limiting, prompt injection protection
-- **Phase 3 HR Backend:** ✅ Shipped — 49 endpoints, 256 unit tests
-  - 3A: Employee/Department/Designation CRUD (15 endpoints)
-  - 3B: Attendance — clock in/out, reports (8 endpoints)
-  - 3C: Leave — apply/approve/reject, balance tracking, carry-forward (10 endpoints)
-  - 3D: Payroll — salary structures, payslip generation, Indian tax engine (6 endpoints)
-  - 3F: Self-service portal + notifications (10 endpoints)
-  - 3G: 296 integration test stubs, full API docs
-- **Phase 4 Agent Portal:** ✅ Shipped — 37 endpoints, 46 unit tests, 200 integration stubs
-  - Agent CRUD + detail + health check (8 endpoints)
-  - Team CRUD + assignment + stats (7 endpoints)
-  - Session logging service (fire-and-forget)
-  - Token analytics — agent/team/platform/trends (5 endpoints)
-  - Session log API with filtering (2 endpoints)
-  - Cost calculator (3 Claude models) + aggregation (4 endpoints)
-  - Efficiency scoring (0-100, 5 weighted factors)
-  - Budget system + auto-pause for non-critical agents (4 endpoints)
-  - Agent configuration API — model/prompt/params/toggle (5 endpoints)
-  - Command audit trail (2 endpoints)
-  - Security: scoped API keys (4 endpoints), agent sandboxing, agent rate limiting, RLS on all 8 tables
+- **Repo:** https://github.com/shiwangi-upadhyay/shelfzone-backend.git
+- **Stack:** Fastify + Prisma + PostgreSQL 16
+- **Server:** 157.10.98.227, port 3001
+- **DB:** localhost:5432, shelfzone, user: postgres, pw: postgres
+
+#### Agent Portal Endpoints (37 total, Phase 4):
+- Agents: POST/GET/GET/:id/GET/:id/detail/PUT/:id/PUT/:id/deactivate/PUT/:id/archive/POST/:id/health-check
+- Teams: POST/GET/GET/:id/PUT/:id/PUT/:id/assign-agent/DELETE/:id/remove-agent/:agentId/GET/:id/stats
+- Analytics: GET platform/agent/:id/team/:id/efficiency/:agentId/trends/:agentId
+- Sessions: GET list/GET/:id
+- Costs: GET platform/breakdown/agent/:id/team/:id
+- Budgets: POST/GET/GET check/:agentId/PUT/:id/unpause
+- Config: PUT model/params/prompt/toggle, GET history
+- Commands: GET list/GET/:id
+- API Keys: POST/GET per agent, DELETE/:id, PUT/:id/rotate
+
+#### AgentTrace Endpoints (17 total, Phase 7):
+- Traces: GET list, GET/:id, POST, PATCH/:id, DELETE/:id
+- Sessions: GET /traces/:traceId/sessions, GET /sessions/:id, GET /sessions/:id/events, GET /agents/:agentId/sessions
+- Events: POST /sessions/:id/events, GET /sessions/:id/timeline
+- Analytics: GET /agents/:id/cost-breakdown, GET /employees/:id/agent-summary, GET /org-tree/agent-overview, GET /traces/:id/flow, GET /agents/:id/stats
+- SSE: GET /traces/:id/events/stream
+
+#### Security Layer:
+- trace-auth.ts: ownership enforcement (SUPER_ADMIN bypass, HR_ADMIN department, owner-only)
+- redaction-service.ts: JWT, passwords, API keys, PEM blocks
+- trace-rate-limit.ts: 5 SSE/user, 100 events/min, 30 list/min
+- trace-audit.ts: cross-user views, deletions
 
 ### Frontend (shelfzone-web)
-- **Stack:** Next.js 16, React 19, Tailwind 4, shadcn/ui, Zustand, TanStack Query, RHF + Zod
-- **Phase 5A Foundation:** ✅ Shipped — dark mode, layout (sidebar/navbar/breadcrumbs), auth pages, form components, JWT auto-refresh API client
-- **Phase 5B HR Portal UI:** ✅ Shipped — 14 routes, 75+ components
-  - Dashboard with stats + quick actions
-  - Employee list, detail view, onboarding wizard
-  - Attendance clock widget + calendar + summary
-  - Leave apply + balance + approval inbox
-  - Payslip viewer + salary breakdown
-  - Self-service profile with PII masking
+- **Repo:** https://github.com/shiwangi-upadhyay/shelfzone-web.git
+- **Stack:** Next.js 16 + shadcn/ui + Zustand + TanStack Query + Tailwind + Recharts + ReactFlow
+- **Server:** 157.10.98.227, port 3000 (dev mode)
 
-### Test Totals (Backend)
-- 40 test suites, 302 unit tests passing, 486 integration stubs (todo)
-- TypeScript: clean compile on both repos
-- Frontend: clean build (npm run build)
+#### Pages:
+- Dashboard: /dashboard (main dashboard)
+- Employees: /dashboard/employees, /new, /[id]
+- Departments: /dashboard/departments
+- Designations: /dashboard/designations
+- Attendance: /dashboard/attendance
+- Leave: /dashboard/leave, /apply
+- Payroll: /dashboard/payroll, /[id]
+- Notifications: /dashboard/notifications
+- Profile: /dashboard/profile
+- Agents: /dashboard/agents, /[id], /analytics, /budgets, /commands, /costs, /teams
+- Agent Trace: /dashboard/agent-trace, /trace/[traceId]
 
-## Git Branch Status
-- All feature branches merged to main via develop → testing → main
-- Both repos: main is up to date
-- No active feature branches
+#### Current branch: `feature/fix-agent-trace-rendering` (has debug logs)
 
-## What's Next (Pending Boss Decision)
-- **Phase 5C:** Agent Portal UI (frontend for Phase 4 backend APIs) — agent dashboard, team management, analytics charts, cost views, budget management, config editor
-- **Phase 3E:** Performance module (P1, deferred)
-- **P1 Agent Portal tasks:** Multi-tenancy, anomaly detection, cost projection, invoicing, leaderboard, model downgrade recommendations, config versioning with diff/rollback
-- **Integration testing:** Implement the 486+ test.todo stubs when test DB is available
-- **Deployment:** Docker Compose for full stack, CI/CD pipeline
+### Database State
+- 19 users, 19 employees, 6 departments
+- 8 agents (SHIWANGI + 7 sub-agents), 1 team "ShelfZone Core"
+- 1 trace "Build AgentTrace observability platform" with 7 sessions, 66 events
+- All agents owned by user `cmm645h9l0002ujf3u8lk5t01` (Shiwangi's employee user)
+- Admin login: admin@shelfzone.com / Admin@12345
+- JWT expiry: 24h
 
-## Allowed Models
-- anthropic/claude-opus-4-6
-- anthropic/claude-sonnet-4-5
-- anthropic/claude-haiku-4-5
+## WHAT'S BROKEN (Phase 1 — Fix These)
 
-## Key Docs
-- `docs/api-core-hr.md` — HR API reference (2,453 lines)
-- `docs/api-agent-portal.md` — Agent Portal API reference (1,774 lines)
-- `docs/build-log.md` — Full build history
-- `docs/security-architecture.md` — Security architecture
-- `tests/TEST-SUMMARY.md` — Test coverage summary
+### AgentTrace Page (/dashboard/agent-trace)
+- **Org View:** Shows "No employees found" — API returns 19 employees with data, frontend doesn't render
+- **Agent View:** Empty — same root cause
+- **Recent Traces:** Shows "No traces found" — API returns 1 trace
+- **Root cause:** Debug logs added to hooks (use-agent-stats.ts, use-traces.ts) and agent-map.tsx but user reports no errors visible. Need to check browser console.
+- Likely issue: either token not being sent (getAuthToken reads from Zustand localStorage), or TanStack Query error handling swallowing errors
+
+### Trace Flow Page (/dashboard/agent-trace/trace/[traceId])
+- **Flow graph:** Shows nothing
+- **API works:** /api/traces/:id/flow returns 7 nodes, 24 edges correctly
+
+### Dashboard
+- Not loading properly
+
+### Seed Data Issues
+- Only 1 trace exists — need 3 (per architecture doc)
+- Need Prabal's DataBot + sub-agents, Sakshi's HelperBot
+- Need 30 days of cost data
+- Need budget entries
+
+## Phase 1 Plan — Fix What's Broken
+
+### Step 1: Debug & Fix Frontend Rendering
+- Check browser console for the debug logs I added
+- The API calls return correct data (verified via curl)
+- Most likely: getAuthToken() failing, or response shape mismatch
+- Fix the actual rendering bug
+
+### Step 2: Fix Seed Data (per architecture doc section 10)
+- Add Prabal's agents: DataBot (master) + ParseBot, QABot, ReportBot
+- Add Sakshi's agent: HelperBot (master, no sub-agents)
+- Add 2 more traces with real conversations
+- Add 30 days of cost data
+- Add budget entries ($500/month for Shiwangi)
+
+### Step 3: Verify Every Page
+- Test /dashboard/agent-trace — Org View shows employees with badges
+- Test /dashboard/agent-trace — Agent View shows agent trees
+- Test /dashboard/agent-trace/trace/[traceId] — Flow graph renders
+- Test /dashboard — loads without errors
+- Test all agent portal pages work
+
+### Step 4: Design Compliance
+- Follow design philosophy: Linear/Vercel-style, flat, subtle borders, generous whitespace
+- Muted palette: slate/gray base, indigo accent, red errors, green success
+- Monospace for data values
+- Dual theme: light/dark/system
+
+## Architecture Doc Key Points for Future Phases
+- Phase 2: Agent Command Center (chat interface + Anthropic API gateway) — CRITICAL
+- Phase 3: Visualization upgrade (match mockup quality)
+- Phase 4: Billing Dashboard (new)
+- Phase 5: Polish + Agent Requests
+- New endpoints needed: /api/agent-gateway/*, /api/agent-requests/*, /api/billing/*
+
+## Git Branches
+- main: current production (has all Phase 1-7 code, some broken)
+- feature/fix-agent-trace-rendering: current working branch for frontend fixes (has debug logs)
+- All future work: feature branch → develop → testing → main (Boss approves each merge)
