@@ -80,7 +80,7 @@ async function main() {
   console.log('✅ Team "ShelfZone Core" created');
 
   // ─── TaskTrace ─────────────────────────────────────────────────────
-  const traceId = 'trace-001';
+  const traceId = 'c0000001-0001-4000-8000-000000000001';
   await prisma.taskTrace.upsert({
     where: { id: traceId },
     update: {},
