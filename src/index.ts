@@ -28,6 +28,7 @@ import apiKeyRoutes from './modules/agent-portal/api-keys/api-key.routes.js';
 import traceRoutes from './modules/agent-trace/trace.routes.js';
 import agentGatewayRoutes from './modules/agent-gateway/gateway.routes.js';
 import userApiKeyRoutes from './modules/api-keys/api-key.routes.js';
+import billingRoutes from './modules/billing/billing.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -76,6 +77,9 @@ await app.register(traceRoutes);
 // Agent Gateway (Command Center)
 await app.register(agentGatewayRoutes);
 await app.register(userApiKeyRoutes);
+
+// Billing
+await app.register(billingRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
