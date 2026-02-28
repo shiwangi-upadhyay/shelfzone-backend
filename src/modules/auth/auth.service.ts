@@ -1,4 +1,5 @@
 import * as argon2 from 'argon2';
+import { createHash } from 'crypto';
 import jwt from 'jsonwebtoken';
 import { Role } from '@prisma/client';
 import prisma from '../../lib/prisma.js';
@@ -20,6 +21,18 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return argon2.verify(hash, password);
+}
+
+/**
+ * Fast SHA-256 hash for high-entropy tokens (refresh tokens, API keys).
+ * Argon2 is unnecessary here — these tokens are already cryptographically random.
+ */
+export function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function verifyToken(token: string, storedHash: string): boolean {
+  return hashToken(token) === storedHash;
 }
 
 export function generateAccessToken(payload: AccessTokenPayload): string {
@@ -74,8 +87,8 @@ export async function login(email: string, password: string) {
   const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
   const refreshToken = generateRefreshToken({ userId: user.id });
 
-  // Store refresh token HASH in DB
-  const refreshTokenHash = await hashPassword(refreshToken);
+  // Store refresh token hash in DB (SHA-256 — token is already high-entropy)
+  const refreshTokenHash = hashToken(refreshToken);
   await prisma.user.update({
     where: { id: user.id },
     data: { refreshToken: refreshTokenHash },
@@ -102,7 +115,7 @@ export async function refresh(refreshToken: string) {
   }
 
   // Verify the refresh token against stored hash
-  const valid = await verifyPassword(refreshToken, user.refreshToken);
+  const valid = verifyToken(refreshToken, user.refreshToken);
   if (!valid) {
     throw new Error('INVALID_REFRESH_TOKEN');
   }
@@ -114,7 +127,7 @@ export async function refresh(refreshToken: string) {
     role: user.role,
   });
   const newRefreshToken = generateRefreshToken({ userId: user.id });
-  const newRefreshTokenHash = await hashPassword(newRefreshToken);
+  const newRefreshTokenHash = hashToken(newRefreshToken);
 
   await prisma.user.update({
     where: { id: user.id },
