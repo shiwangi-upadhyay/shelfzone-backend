@@ -1,11 +1,20 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { instructSchema, traceParamsSchema } from './gateway.schemas.js';
 import * as gatewayService from './gateway.service.js';
+import { getUserDecryptedKey } from '../api-keys/api-key.service.js';
 
 export async function instructHandler(request: FastifyRequest, reply: FastifyReply) {
   const parsed = instructSchema.safeParse(request.body);
   if (!parsed.success) {
     return reply.status(400).send({ error: 'Validation Error', message: parsed.error.issues[0].message });
+  }
+
+  // Check API key BEFORE creating trace (unless simulation mode)
+  if (process.env.USE_SIMULATION !== 'true') {
+    const apiKey = await getUserDecryptedKey(request.user!.userId);
+    if (!apiKey) {
+      return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
+    }
   }
 
   try {
