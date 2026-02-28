@@ -10,11 +10,11 @@ function buildDateFilter(from?: string, to?: string) {
 
 export async function getSummary(from?: string, to?: string) {
   const dateFilter = buildDateFilter(from, to);
-  const where = dateFilter ? { createdAt: dateFilter } : {};
+  const where: any = dateFilter ? { startedAt: dateFilter } : {};
 
-  const agg = await prisma.agentSession.aggregate({
+  const agg = await prisma.traceSession.aggregate({
     where,
-    _sum: { cost: true, totalTokens: true },
+    _sum: { cost: true, tokensIn: true, tokensOut: true },
   });
 
   const activeAgents = await prisma.agentRegistry.count({
@@ -27,12 +27,12 @@ export async function getSummary(from?: string, to?: string) {
   const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
   const [costThisMonth, costLastMonth] = await Promise.all([
-    prisma.agentSession.aggregate({
-      where: { createdAt: { gte: thisMonthStart } },
+    prisma.traceSession.aggregate({
+      where: { startedAt: { gte: thisMonthStart } },
       _sum: { cost: true },
     }),
-    prisma.agentSession.aggregate({
-      where: { createdAt: { gte: lastMonthStart, lte: lastMonthEnd } },
+    prisma.traceSession.aggregate({
+      where: { startedAt: { gte: lastMonthStart, lte: lastMonthEnd } },
       _sum: { cost: true },
     }),
   ]);
@@ -42,31 +42,31 @@ export async function getSummary(from?: string, to?: string) {
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   const dailyCosts = await prisma.$queryRaw<Array<{ date: string; cost: number }>>`
-    SELECT DATE(created_at) as date, COALESCE(SUM(cost), 0)::float as cost
-    FROM agent_sessions
-    WHERE created_at >= ${thirtyDaysAgo}
-    GROUP BY DATE(created_at)
+    SELECT DATE(started_at) as date, COALESCE(SUM(cost), 0)::float as cost
+    FROM trace_sessions
+    WHERE started_at >= ${thirtyDaysAgo}
+    GROUP BY DATE(started_at)
     ORDER BY date ASC
   `;
 
   return {
-    totalCost: agg._sum.cost ?? 0,
-    totalTokens: agg._sum.totalTokens ?? 0,
+    totalCost: Number(agg._sum.cost ?? 0),
+    totalTokens: (agg._sum.tokensIn ?? 0) + (agg._sum.tokensOut ?? 0),
     activeAgents,
-    costThisMonth: costThisMonth._sum.cost ?? 0,
-    costLastMonth: costLastMonth._sum.cost ?? 0,
+    costThisMonth: Number(costThisMonth._sum.cost ?? 0),
+    costLastMonth: Number(costLastMonth._sum.cost ?? 0),
     costByDay: dailyCosts.map(d => ({ date: String(d.date).slice(0, 10), cost: Number(d.cost) })),
   };
 }
 
 export async function getByAgent(from?: string, to?: string) {
   const dateFilter = buildDateFilter(from, to);
-  const where = dateFilter ? { createdAt: dateFilter } : {};
+  const where: any = dateFilter ? { startedAt: dateFilter } : {};
 
-  const results = await prisma.agentSession.groupBy({
+  const results = await prisma.traceSession.groupBy({
     by: ['agentId'],
     where,
-    _sum: { cost: true, totalTokens: true },
+    _sum: { cost: true, tokensIn: true, tokensOut: true },
     _count: true,
     orderBy: { _sum: { cost: 'desc' } },
   });
@@ -80,14 +80,14 @@ export async function getByAgent(from?: string, to?: string) {
 
   return results.map(r => {
     const agent = agentMap.get(r.agentId);
-    const totalCost = r._sum.cost ?? 0;
+    const totalCost = Number(r._sum.cost ?? 0);
     const sessionCount = r._count;
     return {
       agentId: r.agentId,
       agentName: agent?.name ?? 'Unknown',
       model: agent?.model ?? 'Unknown',
       totalCost,
-      totalTokens: r._sum.totalTokens ?? 0,
+      totalTokens: (r._sum.tokensIn ?? 0) + (r._sum.tokensOut ?? 0),
       sessionCount,
       avgCostPerSession: sessionCount > 0 ? Math.round((totalCost / sessionCount) * 1e6) / 1e6 : 0,
     };
@@ -109,18 +109,19 @@ export async function getByEmployee(from?: string, to?: string) {
       u.id as user_id,
       COALESCE(e.first_name || ' ' || e.last_name, u.email) as name,
       d.name as department,
-      COALESCE(SUM(s.cost), 0)::float as total_cost,
-      COUNT(DISTINCT s.agent_id)::int as agent_count,
-      (SELECT ar.name FROM agent_sessions s2
-       JOIN agent_registry ar ON ar.id = s2.agent_id
-       WHERE s2.user_id = u.id
-       GROUP BY ar.name ORDER BY SUM(s2.cost) DESC LIMIT 1) as top_agent
+      COALESCE(SUM(ts.cost), 0)::float as total_cost,
+      COUNT(DISTINCT ts.agent_id)::int as agent_count,
+      (SELECT ar.name FROM trace_sessions ts2
+       JOIN agent_registry ar ON ar.id = ts2.agent_id
+       JOIN task_traces tt2 ON tt2.id = ts2.task_trace_id
+       WHERE tt2.owner_id = u.id
+       GROUP BY ar.name ORDER BY SUM(ts2.cost) DESC LIMIT 1) as top_agent
     FROM users u
-    LEFT JOIN agent_sessions s ON s.user_id = u.id
-      ${dateFilter ? Prisma.sql`AND s.created_at >= ${new Date(from!)} AND s.created_at <= ${new Date(to + 'T23:59:59.999Z')}` : Prisma.empty}
+    JOIN task_traces tt ON tt.owner_id = u.id
+    JOIN trace_sessions ts ON ts.task_trace_id = tt.id
     LEFT JOIN employees e ON e.user_id = u.id
     LEFT JOIN departments d ON e.department_id = d.id
-    WHERE s.id IS NOT NULL
+    ${dateFilter ? Prisma.sql`WHERE ts.started_at >= ${new Date(from!)} AND ts.started_at <= ${new Date(to + 'T23:59:59.999Z')}` : Prisma.empty}
     GROUP BY u.id, e.first_name, e.last_name, u.email, d.name
     ORDER BY total_cost DESC
   `;
@@ -137,21 +138,30 @@ export async function getByEmployee(from?: string, to?: string) {
 
 export async function getByModel(from?: string, to?: string) {
   const dateFilter = buildDateFilter(from, to);
-  const where = dateFilter ? { createdAt: dateFilter } : {};
 
-  const results = await prisma.agentCostLedger.groupBy({
-    by: ['model'],
-    where,
-    _sum: { totalCost: true, inputTokens: true, outputTokens: true },
-    _count: true,
-    orderBy: { _sum: { totalCost: 'desc' } },
-  });
+  const rows = await prisma.$queryRaw<Array<{
+    model: string;
+    total_cost: number;
+    total_tokens: number;
+    session_count: number;
+  }>>`
+    SELECT
+      ar.model,
+      COALESCE(SUM(ts.cost), 0)::float as total_cost,
+      COALESCE(SUM(ts.tokens_in + ts.tokens_out), 0)::int as total_tokens,
+      COUNT(*)::int as session_count
+    FROM trace_sessions ts
+    JOIN agent_registry ar ON ar.id = ts.agent_id
+    ${dateFilter ? Prisma.sql`WHERE ts.started_at >= ${new Date(from!)} AND ts.started_at <= ${new Date(to + 'T23:59:59.999Z')}` : Prisma.empty}
+    GROUP BY ar.model
+    ORDER BY total_cost DESC
+  `;
 
-  return results.map(r => ({
+  return rows.map(r => ({
     model: r.model,
-    totalCost: r._sum.totalCost ?? 0,
-    totalTokens: (r._sum.inputTokens ?? 0) + (r._sum.outputTokens ?? 0),
-    sessionCount: r._count,
+    totalCost: Number(r.total_cost),
+    totalTokens: Number(r.total_tokens),
+    sessionCount: Number(r.session_count),
   }));
 }
 
@@ -164,12 +174,12 @@ export async function getInvoices() {
     agent_count: number;
   }>>`
     SELECT
-      EXTRACT(MONTH FROM created_at)::int as month,
-      EXTRACT(YEAR FROM created_at)::int as year,
+      EXTRACT(MONTH FROM started_at)::int as month,
+      EXTRACT(YEAR FROM started_at)::int as year,
       COALESCE(SUM(cost), 0)::float as total_cost,
-      COALESCE(SUM(total_tokens), 0)::int as total_tokens,
+      COALESCE(SUM(tokens_in + tokens_out), 0)::int as total_tokens,
       COUNT(DISTINCT agent_id)::int as agent_count
-    FROM agent_sessions
+    FROM trace_sessions
     GROUP BY year, month
     ORDER BY year DESC, month DESC
   `;
@@ -190,18 +200,32 @@ export async function getInvoices() {
 
 export async function getExportCsv(from?: string, to?: string) {
   const dateFilter = buildDateFilter(from, to);
-  const where = dateFilter ? { createdAt: dateFilter } : {};
 
-  const ledgerEntries = await prisma.agentCostLedger.findMany({
-    where,
-    include: { agent: { select: { name: true } } },
-    orderBy: { createdAt: 'asc' },
-  });
+  const rows = await prisma.$queryRaw<Array<{
+    date: string;
+    agent_name: string;
+    model: string;
+    tokens_in: number;
+    tokens_out: number;
+    cost: number;
+  }>>`
+    SELECT
+      DATE(ts.started_at) as date,
+      ar.name as agent_name,
+      ar.model,
+      ts.tokens_in,
+      ts.tokens_out,
+      ts.cost::float as cost
+    FROM trace_sessions ts
+    JOIN agent_registry ar ON ar.id = ts.agent_id
+    ${dateFilter ? Prisma.sql`WHERE ts.started_at >= ${new Date(from!)} AND ts.started_at <= ${new Date(to + 'T23:59:59.999Z')}` : Prisma.empty}
+    ORDER BY ts.started_at ASC
+  `;
 
   const header = 'date,agent,model,tokens_in,tokens_out,cost';
-  const rows = ledgerEntries.map(e =>
-    `${e.createdAt.toISOString().slice(0, 10)},${e.agent.name.replace(/,/g, ' ')},${e.model},${e.inputTokens},${e.outputTokens},${e.totalCost}`
+  const csvRows = rows.map(r =>
+    `${String(r.date).slice(0, 10)},${r.agent_name.replace(/,/g, ' ')},${r.model},${r.tokens_in},${r.tokens_out},${r.cost}`
   );
 
-  return [header, ...rows].join('\n');
+  return [header, ...csvRows].join('\n');
 }
