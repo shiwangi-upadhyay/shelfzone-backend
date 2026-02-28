@@ -75,7 +75,7 @@ export async function streamHandler(request: FastifyRequest, reply: FastifyReply
           durationMs: event.durationMs,
           metadata: event.metadata,
         });
-        reply.raw.write(`event: ${event.type}\ndata: ${payload}\n\n`);
+        reply.raw.write(`data: ${payload}\n\n`);
         lastTimestamp = event.timestamp;
 
         if (event.type === 'trace:completed') {
