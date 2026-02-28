@@ -8,6 +8,17 @@ const config: Config = {
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       useESM: true,
+      useESM: true,
+      tsconfig: {
+        module: 'ESNext',
+        moduleResolution: 'NodeNext',
+        target: 'ES2022',
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        isolatedModules: true,
+      },
+      diagnostics: false,
     }],
   },
   extensionsToTreatAsEsm: ['.ts'],
