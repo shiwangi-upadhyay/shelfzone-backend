@@ -117,6 +117,8 @@ model User {
   commandLogs             CommandLog[]
   createdApiKeys          AgentApiKey[]  @relation("ApiKeyCreator")
   taskTraces              TaskTrace[]    @relation("TraceOwner")
+  agentRequests           AgentRequest[] @relation("AgentRequester")
+  reviewedAgentRequests   AgentRequest[] @relation("AgentRequestReviewer")
 
   @@map("users")
 }
@@ -480,6 +482,7 @@ model AgentRegistry {
   delegatedSessions  TraceSession[]   @relation("TraceSessionDelegator")
   eventsFrom         SessionEvent[]   @relation("EventFromAgent")
   eventsTo           SessionEvent[]   @relation("EventToAgent")
+  agentRequests      AgentRequest[]   @relation("AgentRequests")
 
   @@map("agent_registry")
 }
@@ -746,4 +749,48 @@ model SessionEvent {
   @@index([type])
   @@index([timestamp])
   @@map("session_events")
+}
+
+enum AgentRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model AgentRequest {
+  id            String              @id @default(cuid())
+  requesterId   String              @map("requester_id")
+  agentId       String              @map("agent_id")
+  purpose       String
+  priority      String              @default("normal")  // low, normal, high, urgent
+  status        AgentRequestStatus  @default(PENDING)
+  reviewerId    String?             @map("reviewer_id")
+  reviewNote    String?             @map("review_note")
+  reviewedAt    DateTime?           @map("reviewed_at")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  // Relations
+  requester     User                @relation("AgentRequester", fields: [requesterId], references: [id])
+  agent         AgentRegistry       @relation("AgentRequests", fields: [agentId], references: [id])
+  reviewer      User?               @relation("AgentRequestReviewer", fields: [reviewerId], references: [id])
+
+  @@index([requesterId])
+  @@index([agentId])
+  @@index([status])
+  @@map("agent_requests")
+}
+
+model ModelPricing {
+  id                        String   @id @default(cuid())
+  modelName                 String   @unique @map("model_name")
+  provider                  String   @default("anthropic")
+  inputPricePerMillion      Decimal  @map("input_price_per_million") @db.Decimal(10, 6)
+  outputPricePerMillion     Decimal  @map("output_price_per_million") @db.Decimal(10, 6)
+  cacheInputPricePerMillion Decimal  @default(0) @map("cache_input_price_per_million") @db.Decimal(10, 6)
+  effectiveFrom             DateTime @default(now()) @map("effective_from")
+  createdAt                 DateTime @default(now()) @map("created_at")
+
+  @@map("model_pricing")
 }
