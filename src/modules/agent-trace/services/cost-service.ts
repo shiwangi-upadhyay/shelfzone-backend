@@ -77,8 +77,8 @@ export async function getEmployeeCostSummary(employeeId: string) {
 
   // Get all agents created by this user
   const agents = await prisma.agentRegistry.findMany({
-    where: { createdById: employee.userId },
-    select: { id: true, name: true, slug: true, status: true },
+    where: { createdBy: employee.userId },
+    select: { id: true, name: true, slug: true, status: true, createdBy: true },
   });
 
   const agentIds = agents.map((a) => a.id);
@@ -143,7 +143,7 @@ export async function getOrgCostRollup() {
 
   // Get all agents with their creator info
   const agents = await prisma.agentRegistry.findMany({
-    select: { id: true, name: true, status: true, createdById: true },
+    select: { id: true, name: true, status: true, createdBy: true },
   });
 
   // Get all session costs grouped by agent
@@ -158,7 +158,7 @@ export async function getOrgCostRollup() {
   const userIdToEmpId = new Map(employees.map((e) => [e.userId, e.id]));
   const empAgents = new Map<string, any[]>();
   for (const a of agents) {
-    const empId = userIdToEmpId.get(a.createdById);
+    const empId = userIdToEmpId.get(a.createdBy);
     if (empId) {
       if (!empAgents.has(empId)) empAgents.set(empId, []);
       const c = costMap.get(a.id);

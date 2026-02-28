@@ -25,6 +25,7 @@ import budgetRoutes from './modules/agent-portal/budgets/budget.routes.js';
 import configRoutes from './modules/agent-portal/config/config.routes.js';
 import commandRoutes from './modules/agent-portal/commands/command.routes.js';
 import apiKeyRoutes from './modules/agent-portal/api-keys/api-key.routes.js';
+import traceRoutes from './modules/agent-trace/trace.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -59,6 +60,9 @@ await app.register(budgetRoutes);
 await app.register(configRoutes);
 await app.register(commandRoutes);
 await app.register(apiKeyRoutes);
+
+// Agent Trace (Observability)
+await app.register(traceRoutes);
 
 app.get('/health', async () => ({
   status: 'ok',
