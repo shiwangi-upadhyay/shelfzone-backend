@@ -15,10 +15,16 @@ export async function instructHandler(request: FastifyRequest, reply: FastifyRep
       parsed.data.masterAgentId,
     );
 
-    // Kick off async simulation (fire-and-forget)
-    gatewayService.simulateAgentWork(traceId, sessionId, agentId).catch((err) => {
-      console.error('Simulation failed:', err);
-    });
+    // Use real Anthropic API unless USE_SIMULATION=true
+    if (process.env.USE_SIMULATION === 'true') {
+      gatewayService.simulateAgentWork(traceId, sessionId, agentId).catch((err) => {
+        console.error('Simulation failed:', err);
+      });
+    } else {
+      gatewayService.executeRealAnthropicCall(traceId, sessionId, agentId, request.user!.userId, parsed.data.instruction).catch((err) => {
+        console.error('Anthropic API call failed:', err);
+      });
+    }
 
     return reply.status(201).send({ data: { traceId, sessionId } });
   } catch (err: unknown) {
@@ -52,7 +58,7 @@ export async function streamHandler(request: FastifyRequest, reply: FastifyReply
     .header('X-Accel-Buffering', 'no')
     .header('Access-Control-Allow-Origin', origin)
     .header('Access-Control-Allow-Credentials', 'true');
-  reply.raw.writeHead(200, reply.getHeaders());
+  reply.raw.writeHead(200, reply.getHeaders() as any);
 
   let lastTimestamp: Date | undefined;
   let completed = false;
