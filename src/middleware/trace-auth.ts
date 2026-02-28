@@ -65,7 +65,7 @@ export async function getAccessibleAgentIds(
 
   const ownerIds = await getAccessibleOwnerIds(userId, role);
   const agents = await prisma.agentRegistry.findMany({
-    where: { ownerId: { in: ownerIds } },
+    where: { createdBy: { in: ownerIds } },
     select: { id: true },
   });
   return agents.map((a) => a.id);
@@ -104,7 +104,7 @@ async function getManagedDepartmentEmployeeIds(hrAdminId: string): Promise<strin
   // HR_ADMIN manages departments where they are the head or assigned manager.
   // We look up departments managed by this user, then find all employees in those departments.
   const managedDepts = await prisma.department.findMany({
-    where: { headId: hrAdminId },
+    where: { managerId: hrAdminId },
     select: { id: true },
   });
 
