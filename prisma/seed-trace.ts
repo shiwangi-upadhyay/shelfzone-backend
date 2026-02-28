@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
@@ -9,243 +8,243 @@ const prisma = new PrismaClient({ adapter });
 
 const ADMIN_ID = 'seed-admin-001';
 
-// Hardcoded UUIDs for deterministic seeding
-const IDS = {
-  shiwangi:      'a0000001-0001-4000-8000-000000000001',
-  backendForge:  'a0000001-0002-4000-8000-000000000002',
-  dataArchitect: 'a0000001-0003-4000-8000-000000000003',
-  shieldOps:     'a0000001-0004-4000-8000-000000000004',
-  portalEngine:  'a0000001-0005-4000-8000-000000000005',
-  uicraft:       'a0000001-0006-4000-8000-000000000006',
-  testRunner:    'a0000001-0007-4000-8000-000000000007',
-  docSmith:      'a0000001-0008-4000-8000-000000000008',
-  team:          'b0000001-0001-4000-8000-000000000001',
-  taskTrace:     'c0000001-0001-4000-8000-000000000001',
-  // Sessions
-  sessShiwangi:      'd0000001-0001-4000-8000-000000000001',
-  sessDataArchitect: 'd0000001-0002-4000-8000-000000000002',
-  sessShieldOps:     'd0000001-0003-4000-8000-000000000003',
-  sessBackendForge:  'd0000001-0004-4000-8000-000000000004',
-  sessUicraft:       'd0000001-0005-4000-8000-000000000005',
-  sessDocSmith:      'd0000001-0006-4000-8000-000000000006',
-  sessTestRunner:    'd0000001-0007-4000-8000-000000000007',
-};
-
-const t = (iso: string) => new Date(iso);
-
 async function main() {
-  console.log('🌱 Seeding AgentTrace data...');
-
   // Ensure admin user exists
   await prisma.user.upsert({
     where: { id: ADMIN_ID },
     update: {},
-    create: { id: ADMIN_ID, email: 'admin@shelfzone.com', passwordHash: '$2b$10$placeholder', role: 'SUPER_ADMIN' },
-  });
-
-  // 1. Upsert agents
-  const agentDefs = [
-    { id: IDS.shiwangi, name: 'SHIWANGI', slug: 'shiwangi', description: 'Master agent, architect — coordinates all sub-agents', type: 'WORKFLOW' as const, model: 'claude-opus-4-6', isCritical: true },
-    { id: IDS.backendForge, name: 'BackendForge', slug: 'backend-forge', description: 'Backend development', type: 'WORKFLOW' as const, model: 'claude-opus-4-6', isCritical: false },
-    { id: IDS.dataArchitect, name: 'DataArchitect', slug: 'data-architect', description: 'DB & system design', type: 'WORKFLOW' as const, model: 'claude-opus-4-6', isCritical: false },
-    { id: IDS.shieldOps, name: 'ShieldOps', slug: 'shield-ops', description: 'Security & DevOps', type: 'WORKFLOW' as const, model: 'claude-opus-4-6', isCritical: false },
-    { id: IDS.portalEngine, name: 'PortalEngine', slug: 'portal-engine', description: 'Agent management portal', type: 'WORKFLOW' as const, model: 'claude-opus-4-6', isCritical: false },
-    { id: IDS.uicraft, name: 'UIcraft', slug: 'uicraft', description: 'Frontend development', type: 'WORKFLOW' as const, model: 'claude-sonnet-4-5', isCritical: false },
-    { id: IDS.testRunner, name: 'TestRunner', slug: 'test-runner', description: 'Testing', type: 'WORKFLOW' as const, model: 'claude-sonnet-4-5', isCritical: false },
-    { id: IDS.docSmith, name: 'DocSmith', slug: 'doc-smith', description: 'Documentation', type: 'WORKFLOW' as const, model: 'claude-haiku-4-5', isCritical: false },
-  ];
-
-  const agentIdMap: Record<string, string> = {};
-  for (const def of agentDefs) {
-    const agent = await prisma.agentRegistry.upsert({
-      where: { name: def.name },
-      update: { model: def.model, isCritical: def.isCritical, status: 'ACTIVE' },
-      create: {
-        id: def.id, name: def.name, slug: def.slug, description: def.description,
-        type: def.type, status: 'ACTIVE', model: def.model, isCritical: def.isCritical,
-        createdBy: ADMIN_ID, temperature: 0.5, maxTokens: 8192,
-        systemPrompt: `You are ${def.name}, a specialized agent for ShelfZone.`,
-      },
-    });
-    agentIdMap[def.name] = agent.id;
-  }
-  // Remap IDS to actual DB IDs
-  IDS.shiwangi = agentIdMap['SHIWANGI'];
-  IDS.backendForge = agentIdMap['BackendForge'];
-  IDS.dataArchitect = agentIdMap['DataArchitect'];
-  IDS.shieldOps = agentIdMap['ShieldOps'];
-  IDS.portalEngine = agentIdMap['PortalEngine'];
-  IDS.uicraft = agentIdMap['UIcraft'];
-  IDS.testRunner = agentIdMap['TestRunner'];
-  IDS.docSmith = agentIdMap['DocSmith'];
-  console.log('✅ 8 agents upserted');
-
-  // 2. Team: "ShelfZone Core"
-  await prisma.agentTeam.upsert({
-    where: { name: 'ShelfZone Core' },
-    update: { leadAgentId: IDS.shiwangi },
     create: {
-      id: IDS.team, name: 'ShelfZone Core', description: 'All ShelfZone agents under SHIWANGI',
-      leadAgentId: IDS.shiwangi, createdBy: ADMIN_ID,
+      id: ADMIN_ID,
+      email: 'admin@shelfzone.com',
+      passwordHash: '$2b$10$placeholder_admin',
+      role: 'SUPER_ADMIN',
+      isActive: true,
     },
   });
 
-  // Assign all agents to this team
-  const allAgentIds = [IDS.shiwangi, IDS.backendForge, IDS.dataArchitect, IDS.shieldOps, IDS.portalEngine, IDS.uicraft, IDS.testRunner, IDS.docSmith];
-  for (const id of allAgentIds) {
-    await prisma.agentRegistry.update({ where: { id }, data: { teamId: IDS.team } });
+  // ─── 8 Agents ─────────────────────────────────────────────────────
+  const agentDefs = [
+    { id: 'agent-shiwangi', name: 'SHIWANGI', slug: 'shiwangi', description: 'Master agent — Smart HR Intelligence Workflow Agent for Next-Gen Integration', model: 'claude-opus-4-6', isCritical: true },
+    { id: 'agent-backend', name: 'BackendForge', slug: 'backend-forge', description: 'Backend development agent', model: 'claude-opus-4-6', isCritical: true },
+    { id: 'agent-data', name: 'DataArchitect', slug: 'data-architect', description: 'Database & system design agent', model: 'claude-opus-4-6', isCritical: true },
+    { id: 'agent-shield', name: 'ShieldOps', slug: 'shield-ops', description: 'Security & DevOps agent', model: 'claude-opus-4-6', isCritical: true },
+    { id: 'agent-portal', name: 'PortalEngine', slug: 'portal-engine', description: 'Agent management portal agent', model: 'claude-opus-4-6', isCritical: true },
+    { id: 'agent-ui', name: 'UIcraft', slug: 'uicraft', description: 'Frontend development agent', model: 'claude-sonnet-4-5', isCritical: false },
+    { id: 'agent-test', name: 'TestRunner', slug: 'test-runner', description: 'Testing agent', model: 'claude-sonnet-4-5', isCritical: false },
+    { id: 'agent-doc', name: 'DocSmith', slug: 'doc-smith', description: 'Documentation agent', model: 'claude-haiku-4-5', isCritical: false },
+  ];
+
+  const agents: Record<string, string> = {};
+  for (const def of agentDefs) {
+    const agent = await prisma.agentRegistry.upsert({
+      where: { name: def.name },
+      update: { model: def.model, isCritical: def.isCritical },
+      create: {
+        id: def.id,
+        name: def.name,
+        slug: def.slug,
+        description: def.description,
+        type: 'WORKFLOW',
+        status: 'ACTIVE',
+        model: def.model,
+        isCritical: def.isCritical,
+        systemPrompt: `You are ${def.name}.`,
+        temperature: 0.5,
+        maxTokens: 8192,
+        createdBy: ADMIN_ID,
+      },
+    });
+    agents[def.name] = agent.id;
+  }
+  console.log('✅ 8 agents upserted');
+
+  // ─── Team ──────────────────────────────────────────────────────────
+  const team = await prisma.agentTeam.upsert({
+    where: { name: 'ShelfZone Core' },
+    update: { leadAgentId: agents['SHIWANGI'] },
+    create: {
+      name: 'ShelfZone Core',
+      description: 'SHIWANGI as lead, all 7 sub-agents as members',
+      leadAgentId: agents['SHIWANGI'],
+      createdBy: ADMIN_ID,
+    },
+  });
+
+  // Assign all agents to team
+  for (const name of Object.keys(agents)) {
+    await prisma.agentRegistry.update({
+      where: { id: agents[name] },
+      data: { teamId: team.id },
+    });
   }
   console.log('✅ Team "ShelfZone Core" created');
 
-  // 3. TaskTrace
-  // Delete existing events/sessions/trace for idempotency
-  await prisma.sessionEvent.deleteMany({ where: { session: { taskTraceId: IDS.taskTrace } } });
-  await prisma.traceSession.deleteMany({ where: { taskTraceId: IDS.taskTrace } });
-  await prisma.taskTrace.deleteMany({ where: { id: IDS.taskTrace } });
-
-  await prisma.taskTrace.create({
-    data: {
-      id: IDS.taskTrace,
+  // ─── TaskTrace ─────────────────────────────────────────────────────
+  const traceId = 'trace-001';
+  await prisma.taskTrace.upsert({
+    where: { id: traceId },
+    update: {},
+    create: {
+      id: traceId,
       ownerId: ADMIN_ID,
-      masterAgentId: IDS.shiwangi,
+      masterAgentId: agents['SHIWANGI'],
       instruction: 'Build AgentTrace observability platform',
       status: 'completed',
       totalCost: 2.78,
-      totalTokens: 238000 + 89900,
+      totalTokens: 189000,
       agentsUsed: 7,
-      startedAt: t('2026-02-28T10:48:00Z'),
-      completedAt: t('2026-02-28T11:05:00Z'),
+      startedAt: new Date('2026-02-28T10:48:00Z'),
+      completedAt: new Date('2026-02-28T11:05:00Z'),
     },
   });
   console.log('✅ TaskTrace created');
 
-  // 4. TraceSessions
-  const sessions = [
-    { id: IDS.sessShiwangi, agentId: IDS.shiwangi, parentSessionId: null, delegatedBy: null, instruction: 'Coordinate Phase 7 build, delegate to all agents', status: 'completed', cost: 0.25, tokensIn: 15000, tokensOut: 5000, startedAt: '2026-02-28T10:48:00Z', completedAt: '2026-02-28T11:05:00Z' },
-    { id: IDS.sessDataArchitect, agentId: IDS.dataArchitect, parentSessionId: IDS.sessShiwangi, delegatedBy: IDS.shiwangi, instruction: 'Create AgentTrace schema (TaskTrace, TraceSession, SessionEvent)', status: 'completed', cost: 0.15, tokensIn: 9000, tokensOut: 2800, startedAt: '2026-02-28T10:48:00Z', completedAt: '2026-02-28T10:48:49Z' },
-    { id: IDS.sessShieldOps, agentId: IDS.shieldOps, parentSessionId: IDS.sessShiwangi, delegatedBy: IDS.shiwangi, instruction: 'Build security layer: auth, redaction, rate limiting, audit', status: 'completed', cost: 0.45, tokensIn: 19000, tokensOut: 9200, startedAt: '2026-02-28T10:49:00Z', completedAt: '2026-02-28T10:51:22Z' },
-    { id: IDS.sessBackendForge, agentId: IDS.backendForge, parentSessionId: IDS.sessShiwangi, delegatedBy: IDS.shiwangi, instruction: 'Build 17 API endpoints + 3 services + SSE streaming', status: 'completed', cost: 1.20, tokensIn: 43000, tokensOut: 22500, startedAt: '2026-02-28T10:49:00Z', completedAt: '2026-02-28T10:54:39Z' },
-    { id: IDS.sessUicraft, agentId: IDS.uicraft, parentSessionId: IDS.sessShiwangi, delegatedBy: IDS.shiwangi, instruction: 'Build all 4 UI levels: Agent Map, Detail Panel, Flow, Raw Logs', status: 'completed', cost: 0.35, tokensIn: 45000, tokensOut: 26300, startedAt: '2026-02-28T10:49:00Z', completedAt: '2026-02-28T10:55:13Z' },
-    { id: IDS.sessDocSmith, agentId: IDS.docSmith, parentSessionId: IDS.sessShiwangi, delegatedBy: IDS.shiwangi, instruction: 'Write API docs, architecture docs, build log, README', status: 'completed', cost: 0.08, tokensIn: 54000, tokensOut: 24300, startedAt: '2026-02-28T10:57:00Z', completedAt: '2026-02-28T11:00:09Z' },
-    { id: IDS.sessTestRunner, agentId: IDS.testRunner, parentSessionId: IDS.sessShiwangi, delegatedBy: IDS.shiwangi, instruction: 'Write integration + security + E2E tests', status: 'completed', cost: 0.30, tokensIn: 53000, tokensOut: 20100, startedAt: '2026-02-28T10:57:00Z', completedAt: '2026-02-28T11:01:49Z' },
+  // ─── TraceSessions ─────────────────────────────────────────────────
+  const sessionDefs = [
+    { id: 'session-shiwangi', agent: 'SHIWANGI', parent: null, cost: 0.25, tokensIn: 15000, tokensOut: 5000, start: '10:48:00', end: '11:05:00', instruction: 'Orchestrate: Build AgentTrace observability platform' },
+    { id: 'session-data', agent: 'DataArchitect', parent: 'session-shiwangi', cost: 0.15, tokensIn: 9000, tokensOut: 2800, start: '10:48:10', end: '10:48:59', instruction: 'Design and migrate AgentTrace schema (TaskTrace, TraceSession, SessionEvent)' },
+    { id: 'session-shield', agent: 'ShieldOps', parent: 'session-shiwangi', cost: 0.45, tokensIn: 19000, tokensOut: 9200, start: '10:49:00', end: '10:51:22', instruction: 'Add RLS policies and security audit for AgentTrace tables' },
+    { id: 'session-backend', agent: 'BackendForge', parent: 'session-shiwangi', cost: 1.20, tokensIn: 43000, tokensOut: 22500, start: '10:49:05', end: '10:54:44', instruction: 'Build AgentTrace REST API routes and services' },
+    { id: 'session-ui', agent: 'UIcraft', parent: 'session-shiwangi', cost: 0.35, tokensIn: 45000, tokensOut: 26300, start: '10:50:00', end: '10:56:13', instruction: 'Build AgentTrace dashboard UI components' },
+    { id: 'session-doc', agent: 'DocSmith', parent: 'session-shiwangi', cost: 0.08, tokensIn: 54000, tokensOut: 24300, start: '10:56:20', end: '10:59:29', instruction: 'Document AgentTrace API and update build log' },
+    { id: 'session-test', agent: 'TestRunner', parent: 'session-shiwangi', cost: 0.30, tokensIn: 53000, tokensOut: 20100, start: '10:55:00', end: '10:59:49', instruction: 'Write integration tests for AgentTrace endpoints' },
   ];
 
-  for (const s of sessions) {
-    await prisma.traceSession.create({
-      data: {
-        id: s.id, taskTraceId: IDS.taskTrace, agentId: s.agentId,
-        parentSessionId: s.parentSessionId, delegatedBy: s.delegatedBy,
-        instruction: s.instruction, status: s.status, cost: s.cost,
-        tokensIn: s.tokensIn, tokensOut: s.tokensOut,
-        startedAt: t(s.startedAt), completedAt: t(s.completedAt!),
+  for (const s of sessionDefs) {
+    await prisma.traceSession.upsert({
+      where: { id: s.id },
+      update: {},
+      create: {
+        id: s.id,
+        taskTraceId: traceId,
+        agentId: agents[s.agent],
+        parentSessionId: s.parent,
+        delegatedBy: s.parent ? agents['SHIWANGI'] : null,
+        instruction: s.instruction,
+        status: 'completed',
+        cost: s.cost,
+        tokensIn: s.tokensIn,
+        tokensOut: s.tokensOut,
+        startedAt: new Date(`2026-02-28T${s.start}Z`),
+        completedAt: new Date(`2026-02-28T${s.end}Z`),
       },
     });
   }
   console.log('✅ 7 TraceSessions created');
 
-  // 5. SessionEvents
+  // ─── SessionEvents ─────────────────────────────────────────────────
   let eventIdx = 0;
-  const evt = (sessionId: string, type: string, content: string, timestamp: string, extra: Partial<{ fromAgentId: string; toAgentId: string; tokenCount: number; cost: number; durationMs: number }> = {}) => {
+  const ev = (sessionId: string, type: string, content: string, ts: string, opts: { from?: string; to?: string; tokens?: number; cost?: number; durationMs?: number } = {}) => {
     eventIdx++;
     return {
-      sessionId, type, content, timestamp: t(timestamp),
-      fromAgentId: extra.fromAgentId ?? null,
-      toAgentId: extra.toAgentId ?? null,
-      tokenCount: extra.tokenCount ?? 0,
-      cost: extra.cost ?? 0,
-      durationMs: extra.durationMs ?? null,
+      id: `event-${String(eventIdx).padStart(3, '0')}`,
+      sessionId,
+      type,
+      content,
+      timestamp: new Date(`2026-02-28T${ts}Z`),
+      fromAgentId: opts.from ? agents[opts.from] : null,
+      toAgentId: opts.to ? agents[opts.to] : null,
+      tokenCount: opts.tokens ?? 0,
+      cost: opts.cost ?? 0,
+      durationMs: opts.durationMs ?? null,
       metadata: {},
     };
   };
 
-  const S = IDS.sessShiwangi;
   const events = [
     // SHIWANGI session
-    evt(S, 'instruction', 'Build AgentTrace observability platform', '2026-02-28T10:48:00Z', { tokenCount: 200 }),
-    evt(S, 'thinking', 'Need schema first, then parallel backend+security+frontend, then tests+docs', '2026-02-28T10:48:02Z', { durationMs: 1800 }),
-    evt(S, 'delegation', 'Create 3 tables: TaskTrace, TraceSession, SessionEvent', '2026-02-28T10:48:04Z', { fromAgentId: IDS.shiwangi, toAgentId: IDS.dataArchitect }),
-    evt(S, 'message_in', 'Schema done. 3 tables migrated, indexes created.', '2026-02-28T10:48:50Z', { fromAgentId: IDS.dataArchitect }),
-    evt(S, 'delegation', 'Build 17 API endpoints + 3 services + SSE streaming', '2026-02-28T10:49:00Z', { fromAgentId: IDS.shiwangi, toAgentId: IDS.backendForge }),
-    evt(S, 'delegation', 'Build security layer: auth, redaction, rate limiting, audit', '2026-02-28T10:49:01Z', { fromAgentId: IDS.shiwangi, toAgentId: IDS.shieldOps }),
-    evt(S, 'delegation', 'Build all 4 UI levels: Agent Map, Detail Panel, Flow, Raw Logs', '2026-02-28T10:49:02Z', { fromAgentId: IDS.shiwangi, toAgentId: IDS.uicraft }),
-    evt(S, 'message_in', 'Security layer complete. 23 tests passing.', '2026-02-28T10:51:23Z', { fromAgentId: IDS.shieldOps }),
-    evt(S, 'message_in', '17 endpoints built. 28 tests passing.', '2026-02-28T10:54:40Z', { fromAgentId: IDS.backendForge }),
-    evt(S, 'thinking', 'BackendForge flagged TS errors in trace-auth.ts. Fixing...', '2026-02-28T10:54:45Z', { durationMs: 2000 }),
-    evt(S, 'tool_call', 'Edited trace-auth.ts — fixed field names (createdBy, managerId)', '2026-02-28T10:54:48Z', { durationMs: 3200 }),
-    evt(S, 'message_in', 'All 4 UI levels complete. 17 components, 6 hooks.', '2026-02-28T10:55:14Z', { fromAgentId: IDS.uicraft }),
-    evt(S, 'thinking', 'Build errors in frontend. Fixing TS issues...', '2026-02-28T10:55:20Z', { durationMs: 1500 }),
-    evt(S, 'tool_call', 'Fixed cost-breakdown.tsx, use-attendance.ts, use-live-trace.ts', '2026-02-28T10:55:25Z', { durationMs: 4500 }),
-    evt(S, 'delegation', 'Write integration + security + E2E tests', '2026-02-28T10:57:00Z', { fromAgentId: IDS.shiwangi, toAgentId: IDS.testRunner }),
-    evt(S, 'delegation', 'Write AgentTrace documentation', '2026-02-28T10:57:01Z', { fromAgentId: IDS.shiwangi, toAgentId: IDS.docSmith }),
-    evt(S, 'message_in', 'Integration + E2E tests complete.', '2026-02-28T11:01:50Z', { fromAgentId: IDS.testRunner }),
-    evt(S, 'message_in', 'All docs written and pushed.', '2026-02-28T11:00:10Z', { fromAgentId: IDS.docSmith }),
-    evt(S, 'completion', 'Phase 7 complete. All agents delivered. Both repos build clean.', '2026-02-28T11:05:00Z', { tokenCount: 300, cost: 0.02 }),
+    ev('session-shiwangi', 'instruction', 'Owner requested: Build AgentTrace observability platform with full trace hierarchy, session events, and dashboard UI.', '10:48:00', { tokens: 500 }),
+    ev('session-shiwangi', 'thinking', 'Planning task decomposition: schema design → security → API routes → UI → tests → docs. DataArchitect first for schema, then parallel work.', '10:48:02', { tokens: 800 }),
+    ev('session-shiwangi', 'delegation', 'Delegating schema design to DataArchitect', '10:48:05', { from: 'SHIWANGI', to: 'DataArchitect' }),
+    ev('session-shiwangi', 'delegation', 'Delegating security audit to ShieldOps', '10:48:55', { from: 'SHIWANGI', to: 'ShieldOps' }),
+    ev('session-shiwangi', 'delegation', 'Delegating API routes to BackendForge', '10:49:00', { from: 'SHIWANGI', to: 'BackendForge' }),
+    ev('session-shiwangi', 'delegation', 'Delegating dashboard UI to UIcraft', '10:49:50', { from: 'SHIWANGI', to: 'UIcraft' }),
+    ev('session-shiwangi', 'delegation', 'Delegating tests to TestRunner', '10:54:50', { from: 'SHIWANGI', to: 'TestRunner' }),
+    ev('session-shiwangi', 'delegation', 'Delegating documentation to DocSmith', '10:56:15', { from: 'SHIWANGI', to: 'DocSmith' }),
+    ev('session-shiwangi', 'message_in', 'DataArchitect reports: Schema migration complete — 3 tables, 9 indexes', '10:49:00', { from: 'DataArchitect', to: 'SHIWANGI' }),
+    ev('session-shiwangi', 'message_in', 'ShieldOps reports: RLS policies applied, audit columns verified', '10:51:25', { from: 'ShieldOps', to: 'SHIWANGI' }),
+    ev('session-shiwangi', 'message_in', 'BackendForge reports: 12 API endpoints live — traces, sessions, events CRUD', '10:54:50', { from: 'BackendForge', to: 'SHIWANGI' }),
+    ev('session-shiwangi', 'tool_call', 'Running: npx tsc --noEmit to verify full project compiles', '10:55:00', { durationMs: 8200 }),
+    ev('session-shiwangi', 'error', 'TS2345: Argument of type string not assignable to Decimal — in trace.service.ts line 47', '10:55:10'),
+    ev('session-shiwangi', 'tool_call', 'Fixing: replaced string literal with new Prisma.Decimal() in trace.service.ts', '10:55:20', { durationMs: 3100 }),
+    ev('session-shiwangi', 'message_in', 'UIcraft reports: Dashboard with trace timeline, session tree, event log deployed', '10:56:15', { from: 'UIcraft', to: 'SHIWANGI' }),
+    ev('session-shiwangi', 'message_in', 'TestRunner reports: 24 tests passing, 92% coverage on trace module', '10:59:50', { from: 'TestRunner', to: 'SHIWANGI' }),
+    ev('session-shiwangi', 'message_in', 'DocSmith reports: API docs updated, build log entry added', '10:59:35', { from: 'DocSmith', to: 'SHIWANGI' }),
+    ev('session-shiwangi', 'completion', 'AgentTrace observability platform complete. 3 tables, 12 endpoints, dashboard UI, 24 tests, full docs.', '11:05:00', { tokens: 1200, cost: 0.05 }),
 
     // DataArchitect session
-    evt(IDS.sessDataArchitect, 'instruction', 'Create AgentTrace schema', '2026-02-28T10:48:00Z', { tokenCount: 150 }),
-    evt(IDS.sessDataArchitect, 'thinking', 'Need 3 tables with proper relations and indexes', '2026-02-28T10:48:03Z', { durationMs: 1200 }),
-    evt(IDS.sessDataArchitect, 'tool_call', 'Read prisma/schema.prisma', '2026-02-28T10:48:08Z', { durationMs: 800 }),
-    evt(IDS.sessDataArchitect, 'tool_call', 'Added TaskTrace, TraceSession, SessionEvent models', '2026-02-28T10:48:25Z', { durationMs: 12000, tokenCount: 1800 }),
-    evt(IDS.sessDataArchitect, 'tool_call', 'npx prisma migrate dev --name add-agent-trace-tables', '2026-02-28T10:48:40Z', { durationMs: 8000 }),
-    evt(IDS.sessDataArchitect, 'completion', '3 tables created and migrated. Pushed to main.', '2026-02-28T10:48:49Z', { tokenCount: 200, cost: 0.01 }),
-
-    // BackendForge session
-    evt(IDS.sessBackendForge, 'instruction', 'Build all 17 AgentTrace API endpoints', '2026-02-28T10:49:00Z', { tokenCount: 250 }),
-    evt(IDS.sessBackendForge, 'thinking', 'Start with route structure. Need trace-service, cost-service, flow-service.', '2026-02-28T10:49:05Z', { durationMs: 2500 }),
-    evt(IDS.sessBackendForge, 'tool_call', 'Created src/modules/agent-trace/trace.routes.ts', '2026-02-28T10:49:30Z', { durationMs: 15000, tokenCount: 3200 }),
-    evt(IDS.sessBackendForge, 'tool_call', 'Created trace.controller.ts with Zod validation', '2026-02-28T10:50:15Z', { durationMs: 25000, tokenCount: 4500 }),
-    evt(IDS.sessBackendForge, 'tool_call', 'Created trace-service.ts — CRUD, sessions, events', '2026-02-28T10:51:00Z', { durationMs: 35000, tokenCount: 5800 }),
-    evt(IDS.sessBackendForge, 'tool_call', 'Created cost-service.ts — aggregation, employee summaries', '2026-02-28T10:52:00Z', { durationMs: 20000, tokenCount: 3400 }),
-    evt(IDS.sessBackendForge, 'tool_call', 'Created flow-service.ts — ReactFlow graph builder', '2026-02-28T10:52:40Z', { durationMs: 18000, tokenCount: 2800 }),
-    evt(IDS.sessBackendForge, 'error', 'TS error in trace-auth.ts: ownerId doesn\'t exist on AgentRegistryWhereInput', '2026-02-28T10:53:20Z'),
-    evt(IDS.sessBackendForge, 'tool_call', 'Created tests — 28 tests', '2026-02-28T10:53:50Z', { durationMs: 30000, tokenCount: 4200 }),
-    evt(IDS.sessBackendForge, 'completion', '17 endpoints, 3 services, 28 tests. All passing.', '2026-02-28T10:54:39Z', { tokenCount: 300, cost: 0.08 }),
+    ev('session-data', 'instruction', 'Design and migrate AgentTrace schema: TaskTrace, TraceSession, SessionEvent with proper relations', '10:48:10', { from: 'SHIWANGI', tokens: 400 }),
+    ev('session-data', 'thinking', 'Need 3 models: TaskTrace (top-level), TraceSession (per-agent, self-referential for hierarchy), SessionEvent (granular events). Decimal for costs, Text for content.', '10:48:12', { tokens: 600 }),
+    ev('session-data', 'tool_call', 'Writing schema additions to prisma/schema.prisma — 3 models, 6 relations, 9 indexes', '10:48:20', { durationMs: 5200 }),
+    ev('session-data', 'tool_call', 'Running: npx prisma migrate dev --name add-agent-trace', '10:48:35', { durationMs: 18000 }),
+    ev('session-data', 'tool_call', 'Running: npx prisma generate', '10:48:50', { durationMs: 4500 }),
+    ev('session-data', 'completion', 'Schema migration complete. 3 tables created: task_traces, trace_sessions, session_events. 9 indexes, self-referential session hierarchy.', '10:48:59', { tokens: 300, cost: 0.02 }),
 
     // ShieldOps session
-    evt(IDS.sessShieldOps, 'instruction', 'Build security layer for AgentTrace', '2026-02-28T10:49:00Z', { tokenCount: 200 }),
-    evt(IDS.sessShieldOps, 'thinking', 'Need ownership enforcement, secret redaction, rate limiting', '2026-02-28T10:49:04Z', { durationMs: 2000 }),
-    evt(IDS.sessShieldOps, 'tool_call', 'Created trace-auth.ts — canAccessTrace, canAccessSession, getAccessibleAgentIds', '2026-02-28T10:49:30Z', { durationMs: 22000, tokenCount: 3600 }),
-    evt(IDS.sessShieldOps, 'tool_call', 'Created redaction-service.ts — JWT, passwords, API keys, PEM blocks', '2026-02-28T10:50:10Z', { durationMs: 18000, tokenCount: 2800 }),
-    evt(IDS.sessShieldOps, 'tool_call', 'Created trace-rate-limit.ts — 5 SSE/user, 100 events/min', '2026-02-28T10:50:40Z', { durationMs: 12000, tokenCount: 1900 }),
-    evt(IDS.sessShieldOps, 'tool_call', 'Created trace-audit.ts — cross-user views, deletions', '2026-02-28T10:51:00Z', { durationMs: 8000, tokenCount: 1400 }),
-    evt(IDS.sessShieldOps, 'tool_call', '23 security tests — all passing', '2026-02-28T10:51:15Z', { durationMs: 6000, tokenCount: 2100 }),
-    evt(IDS.sessShieldOps, 'completion', 'Security layer complete. Pushed to main.', '2026-02-28T10:51:22Z', { tokenCount: 200, cost: 0.03 }),
+    ev('session-shield', 'instruction', 'Audit and secure AgentTrace tables: RLS, input validation, rate limits', '10:49:00', { from: 'SHIWANGI', tokens: 350 }),
+    ev('session-shield', 'thinking', 'Trace data is sensitive — need RLS for multi-tenant isolation, ensure ownerId checks, validate event types against allowlist.', '10:49:05', { tokens: 700 }),
+    ev('session-shield', 'tool_call', 'Adding RLS policies: task_traces owner-only, trace_sessions via task owner, session_events via session chain', '10:49:30', { durationMs: 25000 }),
+    ev('session-shield', 'tool_call', 'Adding Zod validation schemas for trace API inputs', '10:50:10', { durationMs: 15000 }),
+    ev('session-shield', 'error', 'RLS policy conflict: existing policy on agent_registry blocks join. Need CASCADE approach.', '10:50:30'),
+    ev('session-shield', 'fix', 'Rewrote RLS to use security_invoker with proper role checks. All policies pass.', '10:50:50', { durationMs: 12000 }),
+    ev('session-shield', 'tool_call', 'Adding rate limit middleware for trace creation: 100 req/min per user', '10:51:00', { durationMs: 8000 }),
+    ev('session-shield', 'completion', 'Security audit complete. 6 RLS policies, Zod schemas, rate limiting applied.', '10:51:22', { tokens: 400, cost: 0.03 }),
+
+    // BackendForge session
+    ev('session-backend', 'instruction', 'Build full REST API for AgentTrace: CRUD for traces, sessions, events. Fastify routes with proper typing.', '10:49:05', { from: 'SHIWANGI', tokens: 500 }),
+    ev('session-backend', 'thinking', 'Need: trace.routes.ts, trace.service.ts, trace.schemas.ts. Endpoints: GET/POST traces, GET/POST sessions, GET/POST events, GET trace/:id/tree for full hierarchy.', '10:49:10', { tokens: 900 }),
+    ev('session-backend', 'tool_call', 'Writing src/modules/trace/trace.service.ts — 8 service methods', '10:49:30', { durationMs: 45000 }),
+    ev('session-backend', 'tool_call', 'Writing src/modules/trace/trace.routes.ts — 12 Fastify endpoints', '10:50:45', { durationMs: 38000 }),
+    ev('session-backend', 'tool_call', 'Writing src/modules/trace/trace.schemas.ts — Zod + JSON Schema definitions', '10:52:00', { durationMs: 22000 }),
+    ev('session-backend', 'error', 'Type error: Prisma Decimal not compatible with JSON serialization in trace tree endpoint', '10:53:10'),
+    ev('session-backend', 'fix', 'Added .toNumber() conversion in trace tree serializer. All endpoints type-check.', '10:53:30', { durationMs: 15000 }),
+    ev('session-backend', 'tool_call', 'Registering trace routes in app.ts, running smoke test', '10:54:00', { durationMs: 12000 }),
+    ev('session-backend', 'completion', 'API complete: 12 endpoints for traces, sessions, events. Full trace tree endpoint with recursive session loading.', '10:54:44', { tokens: 600, cost: 0.08 }),
 
     // UIcraft session
-    evt(IDS.sessUicraft, 'instruction', 'Build complete AgentTrace frontend — all 4 UI levels', '2026-02-28T10:49:00Z', { tokenCount: 300 }),
-    evt(IDS.sessUicraft, 'thinking', 'Need ReactFlow for flow graph. Install dependencies first.', '2026-02-28T10:49:05Z', { durationMs: 2200 }),
-    evt(IDS.sessUicraft, 'tool_call', 'npm install reactflow react-diff-viewer-continued', '2026-02-28T10:49:20Z', { durationMs: 8000 }),
-    evt(IDS.sessUicraft, 'tool_call', 'Created 6 hooks: use-traces, use-trace-sessions, use-session-events, use-trace-flow, use-agent-stats, use-live-trace', '2026-02-28T10:50:00Z', { durationMs: 35000, tokenCount: 5200 }),
-    evt(IDS.sessUicraft, 'tool_call', 'Created 17 components including event cards, flow nodes, agent map', '2026-02-28T10:52:00Z', { durationMs: 90000, tokenCount: 12000 }),
-    evt(IDS.sessUicraft, 'tool_call', 'Created agent-trace/page.tsx — Level 1 Agent Map with view toggle', '2026-02-28T10:53:30Z', { durationMs: 25000, tokenCount: 4200 }),
-    evt(IDS.sessUicraft, 'tool_call', 'Created trace/[traceId]/page.tsx — Level 3 flow graph', '2026-02-28T10:54:20Z', { durationMs: 30000, tokenCount: 4800 }),
-    evt(IDS.sessUicraft, 'error', 'TS error: Recharts formatter type mismatch in cost-breakdown.tsx', '2026-02-28T10:54:55Z'),
-    evt(IDS.sessUicraft, 'completion', 'All 4 UI levels complete. 17 components, 6 hooks, 2 pages.', '2026-02-28T10:55:13Z', { tokenCount: 250, cost: 0.02 }),
+    ev('session-ui', 'instruction', 'Build AgentTrace dashboard: trace list, trace detail with session tree, event timeline', '10:50:00', { from: 'SHIWANGI', tokens: 450 }),
+    ev('session-ui', 'thinking', 'Components needed: TraceList (table), TraceDetail (layout), SessionTree (collapsible tree), EventTimeline (vertical timeline with icons per event type). Use shadcn + Tailwind.', '10:50:05', { tokens: 800 }),
+    ev('session-ui', 'tool_call', 'Writing components/trace/TraceList.tsx — sortable table with status badges and cost display', '10:50:30', { durationMs: 52000 }),
+    ev('session-ui', 'tool_call', 'Writing components/trace/SessionTree.tsx — recursive tree with agent icons, duration bars, token counts', '10:52:00', { durationMs: 65000 }),
+    ev('session-ui', 'tool_call', 'Writing components/trace/EventTimeline.tsx — vertical timeline, color-coded by event type, expandable content', '10:53:30', { durationMs: 48000 }),
+    ev('session-ui', 'tool_call', 'Writing pages/traces/[id].tsx — detail page wiring tree + timeline + stats summary', '10:55:00', { durationMs: 35000 }),
+    ev('session-ui', 'completion', 'Dashboard complete: trace list, session tree, event timeline. Responsive, dark mode ready.', '10:56:13', { tokens: 500, cost: 0.04 }),
 
     // DocSmith session
-    evt(IDS.sessDocSmith, 'instruction', 'Write AgentTrace documentation', '2026-02-28T10:57:00Z', { tokenCount: 180 }),
-    evt(IDS.sessDocSmith, 'thinking', 'Need API docs, architecture overview, build log update', '2026-02-28T10:57:04Z', { durationMs: 1500 }),
-    evt(IDS.sessDocSmith, 'tool_call', 'Updated docs/build-log.md with Phase 7', '2026-02-28T10:57:30Z', { durationMs: 15000, tokenCount: 6000 }),
-    evt(IDS.sessDocSmith, 'tool_call', 'Created docs/agent-trace-api.md (21KB)', '2026-02-28T10:58:15Z', { durationMs: 35000, tokenCount: 9500 }),
-    evt(IDS.sessDocSmith, 'tool_call', 'Created docs/agent-trace-architecture.md (37KB)', '2026-02-28T10:59:10Z', { durationMs: 40000, tokenCount: 12000 }),
-    evt(IDS.sessDocSmith, 'tool_call', 'Updated README.md', '2026-02-28T10:59:50Z', { durationMs: 8000, tokenCount: 2400 }),
-    evt(IDS.sessDocSmith, 'completion', 'All docs written. 58KB+ of documentation.', '2026-02-28T11:00:09Z', { tokenCount: 200, cost: 0.005 }),
+    ev('session-doc', 'instruction', 'Document AgentTrace API endpoints and update build log with implementation details', '10:56:20', { from: 'SHIWANGI', tokens: 300 }),
+    ev('session-doc', 'thinking', 'Need to document 12 endpoints with request/response schemas. Update docs/build-log.md with trace platform entry.', '10:56:25', { tokens: 500 }),
+    ev('session-doc', 'tool_call', 'Writing docs/api/agent-trace.md — full endpoint documentation with examples', '10:56:40', { durationMs: 65000 }),
+    ev('session-doc', 'tool_call', 'Updating docs/build-log.md — adding AgentTrace platform build entry', '10:58:20', { durationMs: 30000 }),
+    ev('session-doc', 'tool_call', 'Updating README.md — adding AgentTrace section to feature list', '10:59:00', { durationMs: 15000 }),
+    ev('session-doc', 'completion', 'Documentation complete. API docs, build log, README all updated.', '10:59:29', { tokens: 200, cost: 0.005 }),
 
     // TestRunner session
-    evt(IDS.sessTestRunner, 'instruction', 'Write integration + security + E2E tests', '2026-02-28T10:57:00Z', { tokenCount: 220 }),
-    evt(IDS.sessTestRunner, 'thinking', 'Need integration tests for all 17 endpoints, security tests, Playwright E2E', '2026-02-28T10:57:05Z', { durationMs: 2000 }),
-    evt(IDS.sessTestRunner, 'tool_call', 'Created agent-trace.test.ts — 17 endpoint tests', '2026-02-28T10:57:40Z', { durationMs: 60000, tokenCount: 8500 }),
-    evt(IDS.sessTestRunner, 'tool_call', 'Created agent-trace-security.test.ts — redaction, auth, rate limiting', '2026-02-28T10:59:00Z', { durationMs: 45000, tokenCount: 6200 }),
-    evt(IDS.sessTestRunner, 'tool_call', 'Created e2e/agent-trace.spec.ts — Playwright tests', '2026-02-28T11:00:30Z', { durationMs: 50000, tokenCount: 5800 }),
-    evt(IDS.sessTestRunner, 'completion', 'All tests created. Integration + security + E2E.', '2026-02-28T11:01:49Z', { tokenCount: 200, cost: 0.02 }),
+    ev('session-test', 'instruction', 'Write integration tests for all AgentTrace endpoints. Target 90%+ coverage.', '10:55:00', { from: 'SHIWANGI', tokens: 400 }),
+    ev('session-test', 'thinking', 'Test plan: trace CRUD (create, list, get, tree), session CRUD, event CRUD. Need test fixtures with proper hierarchy. Mock Prisma or use test DB.', '10:55:05', { tokens: 700 }),
+    ev('session-test', 'tool_call', 'Writing tests/trace/trace.integration.test.ts — 12 test cases for trace endpoints', '10:55:30', { durationMs: 72000 }),
+    ev('session-test', 'tool_call', 'Writing tests/trace/session.integration.test.ts — 8 test cases for session endpoints', '10:57:20', { durationMs: 55000 }),
+    ev('session-test', 'error', 'Test failure: trace tree endpoint returns empty sessions array — missing include in Prisma query', '10:58:30'),
+    ev('session-test', 'fix', 'Reported to SHIWANGI. BackendForge patched the include. Tests now pass.', '10:58:50', { durationMs: 20000 }),
+    ev('session-test', 'tool_call', 'Running full test suite: npx vitest run --coverage', '10:59:10', { durationMs: 25000 }),
+    ev('session-test', 'report', '24/24 tests passing. Coverage: 92.4% statements, 89.1% branches on trace module.', '10:59:45', { tokens: 300, cost: 0.02 }),
+    ev('session-test', 'completion', 'All tests green. 24 integration tests, 92% coverage.', '10:59:49', { tokens: 200, cost: 0.01 }),
   ];
 
-  await prisma.sessionEvent.createMany({ data: events });
+  for (const e of events) {
+    await prisma.sessionEvent.upsert({
+      where: { id: e.id },
+      update: {},
+      create: e,
+    });
+  }
   console.log(`✅ ${events.length} SessionEvents created`);
 
-  console.log('🎉 AgentTrace seed complete!');
+  console.log('\n🎉 AgentTrace seed complete!');
 }
 
 main()
-  .catch((e) => { console.error('❌ Seed failed:', e); process.exit(1); })
+  .catch((e) => {
+    console.error('❌ Seed failed:', e);
+    process.exit(1);
+  })
   .finally(() => prisma.$disconnect());
