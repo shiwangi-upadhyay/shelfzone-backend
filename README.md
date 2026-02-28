@@ -1,125 +1,101 @@
 # ShelfZone Backend
 
-API server for the ShelfZone HR + Agent Management Platform.
+API server for **ShelfZone** — a dual-portal HR + AI Agent Management Platform.
+
+## Features
+
+### HR Portal
+- **Employee Management** — CRUD, departments, designations, profiles
+- **Attendance Tracking** — Clock in/out, reports
+- **Leave Management** — Apply, approve/reject, balances
+- **Payroll** — Generation, processing, payslips, Indian tax calculation
+- **Self-Service** — Employee dashboard, profile, payslips, attendance, leaves
+- **Reports** — Attendance reports with export
+
+### Agent Management Portal
+- **Agent Registry** — Create, manage, health-check 8+ AI agents
+- **Team Management** — Group agents, assign roles, track team stats
+- **Analytics** — Platform/agent/team analytics, efficiency scoring, trends
+- **Cost Management** — Real-time cost tracking, budgets with auto-pause
+- **Configuration** — Model selection, parameters, prompts, feature toggles
+- **API Key Management** — Per-agent keys with rotation
+
+### Agent Trace (Observability)
+- **Distributed Tracing** — Session-based traces with hierarchical tasks
+- **Flow Visualization** — ReactFlow DAG with animated edges, color coding
+- **Cost Attribution** — Per-task cost calculation by agent/model/period
+- **Real-Time Streaming** — SSE for live session events
+- **Security** — Ownership-based access, PII redaction, rate limiting, audit trail
+
+### Command Center
+- **Agent Gateway** — Instruct agents in real-time via SSE streaming
+- **Real Anthropic API** — Claude Opus/Sonnet/Haiku integration
+- **Per-User API Keys** — AES-256-GCM encrypted, BYOK model
+- **3-Panel UI** — Agent selector, chat interface, live task board
+
+### Billing Dashboard
+- **Cost Analytics** — By agent, employee, model with date range filtering
+- **Invoices** — Invoice generation and tracking
+- **CSV Export** — Full billing data export
 
 ## Tech Stack
 
 - **Runtime:** Node.js 22 LTS
 - **Framework:** Fastify
 - **Language:** TypeScript (strict mode)
-- **Database:** PostgreSQL 16 (via TimescaleDB image)
+- **Database:** PostgreSQL 16
 - **Cache:** Redis 7
 - **ORM:** Prisma
 - **Validation:** Zod
-- **Queue:** BullMQ
-- **AI:** Anthropic SDK + LangChain.js
+- **AI:** Anthropic SDK
+- **Security:** AES-256-GCM encryption, Argon2id hashing, RBAC, RLS, audit logging
 
-## AgentTrace — Agent Observability Platform
+## Quick Start
 
-Full-stack agent observability with distributed tracing, cost attribution, and execution flow reconstruction.
+```bash
+git clone https://github.com/shiwangi-upadhyay/shelfzone-backend.git
+cd shelfzone-backend
+npm install
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up -d
+npx prisma migrate dev
+npx prisma db seed
+npm run dev
+# Verify: curl http://localhost:3001/health
+```
 
-### Features
+## Documentation
 
-- **4 UI Levels:** Agent Map (network overview) → Agent Detail (performance) → Task Flow (execution DAG) → Raw Logs (event-level debugging)
-- **Distributed Tracing:** Session-based trace grouping with hierarchical task trees
-- **Real-Time Cost Attribution:** Per-task cost calculation with aggregation by agent, model, and time period
-- **Flow Reconstruction:** DAG visualization with critical path analysis and bottleneck identification
-- **Security:** Ownership-based access control, PII redaction, rate limiting, audit trail
-- **Analytics:** Cost breakdowns, performance metrics, token usage, health scoring
-- **WebSocket Real-Time:** Live session streaming, agent activity feed, task tree updates
-
-### Documentation
-
-- **API Reference:** [`docs/agent-trace-api.md`](docs/agent-trace-api.md) — 17 endpoints with examples
-- **Architecture:** [`docs/agent-trace-architecture.md`](docs/agent-trace-architecture.md) — Data model, UI levels, trace capture, cost aggregation, security model
-
-## Prerequisites
-
-- Node.js 22+
-- Docker & Docker Compose
-- Git
-
-## Setup
-
-1. Clone the repo:
-   ```bash
-   git clone https://github.com/shiwangi-upadhyay/shelfzone-backend.git
-   cd shelfzone-backend
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Copy environment file:
-   ```bash
-   cp .env.example .env
-   ```
-
-4. Start infrastructure:
-   ```bash
-   docker compose -f docker-compose.dev.yml up -d
-   ```
-
-5. Run database migrations:
-   ```bash
-   npx prisma migrate dev
-   ```
-
-6. Start development server:
-   ```bash
-   npm run dev
-   ```
-
-7. Verify:
-   ```bash
-   curl http://localhost:3001/health
-   ```
+- **[API Reference](docs/api-reference.md)** — All 70+ endpoints
+- **[Build Log](docs/build-log.md)** — Complete development history
+- **[Agent Trace API](docs/agent-trace-api.md)** — Trace endpoint details
+- **[Architecture](docs/agent-trace-architecture.md)** — System design
 
 ## Project Structure
 
 ```
 src/
-├── config/        — Environment and app configuration
-├── modules/       — Feature modules (employees, leave, payroll, agents, etc.)
-├── middleware/     — Auth, RBAC, rate limiting
-├── lib/           — Shared utilities
-├── types/         — Shared TypeScript types
-├── jobs/          — BullMQ async job processors
-└── index.ts       — Server entry point
-
-tests/
-├── unit/          — Unit tests (Jest)
-├── integration/   — API integration tests (Supertest)
-├── e2e/           — End-to-end tests (Playwright)
-├── security/      — Security test suite
-└── load/          — Load tests (k6)
-
-docs/
-├── api/           — OpenAPI/Swagger specs
-├── build-log.md   — Build progress log
-└── progress.md    — Task completion tracker
+├── config/          — Environment config
+├── modules/
+│   ├── auth/        — Authentication (register, login, JWT)
+│   ├── employees/   — Employee CRUD
+│   ├── departments/ — Department management
+│   ├── leave/       — Leave requests
+│   ├── leave-admin/ — Leave approval
+│   ├── payroll/     — Payroll processing
+│   ├── self-service/— Employee self-service
+│   ├── reports/     — Report generation
+│   ├── agents/      — Basic agent CRUD
+│   ├── agent-portal/— Full agent management (agents, teams, analytics, costs, budgets, config, commands, api-keys)
+│   ├── agent-trace/ — Observability & tracing
+│   ├── agent-gateway/— Command Center API
+│   ├── api-keys/    — Per-user API key management
+│   └── billing/     — Billing & cost analytics
+├── middleware/       — Auth, RBAC, rate limiting, sanitization
+├── lib/             — Encryption, audit, RLS, utilities
+└── index.ts         — Server entry
 ```
-
-## Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start dev server with hot reload |
-| `npm run build` | Compile TypeScript |
-| `npm start` | Run production build |
-| `npm run typecheck` | Type check without emitting |
-
-## Git Workflow
-
-- `main` — Production (protected)
-- `testing` — QA branch
-- `develop` — Integration branch
-- `feature/*` — Feature branches
-
-All merges require explicit approval.
 
 ## License
 
-Proprietary — Confidential
+Private — © Shiwangi Upadhyay

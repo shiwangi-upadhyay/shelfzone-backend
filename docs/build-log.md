@@ -1292,4 +1292,129 @@ Full-stack agent observability with 4 UI levels (Agent Map, Agent Detail Panel, 
 - Test coverage: 23 tests, all passing
 - TypeScript strict mode: zero errors
 - ESLint: zero new violations
-- Awaiting approval for: develop → testing → main
+- Merged to main
+
+---
+
+## Agent Portal v2.0 — 2026-02-28
+
+### [AP2.1] Phase 1: Fix Agent Trace Pages
+- **Date:** 2026-02-28
+- **Agent:** PortalEngine
+- **Status:** ✅ Complete
+
+**Problem:** Agent Trace pages (Org View, Agent View, Trace Flow) completely broken — showing empty/no data despite API returning valid responses.
+
+**Root Causes Found & Fixed:**
+1. **Trace routes not registered** in `src/index.ts` → all `/api/traces/*` returned 404
+2. **Helmet CORS blocking** — Content-Security-Policy headers blocked cross-origin requests from Next.js dev server
+3. **Next.js cross-origin dev blocking** — dev server refusing connections from different origin
+
+**Files Modified:**
+- `src/index.ts` — registered trace routes
+- `prisma/seed-trace.ts` — new seed script with 3 traces, real conversation data
+- Frontend: agent-trace page components, hooks
+
+**Data Seeded:** 19 employees, 8 agents, 6 traces with realistic multi-turn conversations
+
+---
+
+### [AP2.2] Phase 2: Command Center
+- **Date:** 2026-02-28
+- **Agent:** PortalEngine + BackendForge
+- **Status:** ✅ Complete
+
+**Built:** Agent Gateway API — real-time command-and-control interface for instructing agents.
+
+**Backend — 6 New Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/agent-gateway/instruct` | Send instruction to an agent |
+| GET | `/api/agent-gateway/stream/:traceId` | SSE stream of execution events |
+| POST | `/api/agent-gateway/cancel/:traceId` | Cancel running execution |
+| POST | `/api/agent-gateway/pause/:traceId` | Pause execution |
+| POST | `/api/agent-gateway/resume/:traceId` | Resume paused execution |
+| GET | `/api/agent-gateway/status/:traceId` | Get execution status |
+
+**Files Added:**
+- `src/modules/agent-gateway/gateway.service.ts`
+- `src/modules/agent-gateway/gateway.controller.ts`
+- `src/modules/agent-gateway/gateway.schemas.ts`
+- `src/modules/agent-gateway/gateway.routes.ts`
+
+**Frontend — 3-Panel Command Center UI:**
+- Agent sidebar (select agent to instruct)
+- Chat interface (send instructions, view responses)
+- Live task board (real-time execution progress via SSE)
+
+**Bug Fixes:**
+1. **Named SSE events → unnamed** — `EventSource.onmessage` only fires for unnamed events
+2. **SSE CORS headers** — `reply.raw.writeHead()` bypasses Fastify CORS plugin; added manual headers
+3. **crypto.randomUUID() on HTTP** — Fails in non-secure contexts; replaced with fallback generator
+
+---
+
+### [AP2.3] Phase 2B: Real Anthropic API + Per-User API Keys
+- **Date:** 2026-02-28
+- **Agent:** PortalEngine + ShieldOps
+- **Status:** ✅ Complete
+
+**Backend — 3 New Endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/user/api-key` | Store encrypted API key |
+| GET | `/api/user/api-key` | Check if key exists (masked) |
+| DELETE | `/api/user/api-key` | Remove stored key |
+
+**Files Added:**
+- `src/modules/api-keys/api-key.{service,controller,routes,schemas}.ts`
+
+**Key Decisions:**
+- AES-256-GCM encryption at rest (per-key random IV)
+- Simulation engine replaced with real Anthropic SDK
+- Command Center gated behind API key — must set key first
+- Cost tracking: Opus ($15/$75), Sonnet ($3/$15), Haiku ($0.25/$1.25) per 1M tokens
+
+**Frontend:** API Key Settings page at `/dashboard/settings/api-keys`
+
+---
+
+### [AP2.4] Phase 3: Visualization Upgrade
+- **Date:** 2026-02-28
+- **Agent:** UIcraft
+- **Status:** ✅ Complete
+
+**Changes:**
+- Agent Trace Map redesigned (Org View + Agent View)
+- Trace Flow rebuilt with ReactFlow (animated edges, color-coded nodes)
+- 3-tab Agent Detail Panel: Conversation, Cost & Usage, Raw Logs
+- New TraceTimeline component (chronological color-coded events)
+- Design: Linear/Vercel-inspired — flat, muted palette, monospace data
+
+---
+
+### [AP2.5] Phase 4: Billing Dashboard
+- **Date:** 2026-02-28
+- **Agent:** BackendForge + UIcraft
+- **Status:** ✅ Complete
+
+**Backend — 6 New Endpoints:**
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/billing/summary` | Auth | Overall billing summary |
+| GET | `/api/billing/by-agent` | Auth | Costs by agent |
+| GET | `/api/billing/by-employee` | Admin | Costs by employee |
+| GET | `/api/billing/by-model` | Auth | Costs by model |
+| GET | `/api/billing/invoices` | Auth | Invoice list |
+| GET | `/api/billing/export` | Auth | CSV export |
+
+**Files Added:** `src/modules/billing/billing.{service,controller,routes,schemas}.ts`
+
+**Frontend:** Summary cards, Recharts charts, tabbed tables, invoice list, CSV export
+
+---
+
+### Agent Portal v2.0 — Summary
+- **New endpoints today:** 15 (6 gateway + 3 user API keys + 6 billing)
+- **Total system endpoints:** ~70+
+- **All 4 phases completed, committed, and pushed to main**
