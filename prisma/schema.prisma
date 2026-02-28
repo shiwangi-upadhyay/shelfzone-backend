@@ -114,9 +114,7 @@ model User {
   agentConfigChanges      AgentConfigLog[]
   commandLogs             CommandLog[]
   createdApiKeys          AgentApiKey[]  @relation("ApiKeyCreator")
-
-  // AgentTrace relations
-  taskTraces              TaskTrace[]        @relation("TaskTraceOwner")
+  taskTraces              TaskTrace[]    @relation("TraceOwner")
 
   @@map("users")
 }
@@ -458,13 +456,11 @@ model AgentRegistry {
   configLogs     AgentConfigLog[]
   leadOfTeams    AgentTeam[]      @relation("TeamLead")
   apiKeys        AgentApiKey[]
-
-  // AgentTrace relations
-  masterOfTaskTraces    TaskTrace[]      @relation("TaskTraceMasterAgent")
-  traceSessions         TraceSession[]   @relation("TraceSessionAgent")
-  delegatedTraceSessions TraceSession[]  @relation("TraceSessionDelegator")
-  fromSessionEvents     SessionEvent[]   @relation("SessionEventFromAgent")
-  toSessionEvents       SessionEvent[]   @relation("SessionEventToAgent")
+  masterTraces       TaskTrace[]      @relation("TraceMasterAgent")
+  traceSessions      TraceSession[]   @relation("TraceSessionAgent")
+  delegatedSessions  TraceSession[]   @relation("TraceSessionDelegator")
+  eventsFrom         SessionEvent[]   @relation("EventFromAgent")
+  eventsTo           SessionEvent[]   @relation("EventToAgent")
 
   @@map("agent_registry")
 }
@@ -649,13 +645,13 @@ model AgentApiKey {
   @@map("agent_api_keys")
 }
 
-// ─── Agent Trace (Observability) ─────────────────────────────────────
+// ─── Agent Trace (Observability) ─────────────────────────────────
 
 model TaskTrace {
-  id            String    @id @default(uuid())
+  id            String    @id @default(cuid())
   ownerId       String    @map("owner_id")
   masterAgentId String?   @map("master_agent_id")
-  instruction   String    @db.Text
+  instruction   String
   status        String    @default("running")
   totalCost     Decimal   @default(0) @db.Decimal(10, 4)
   totalTokens   Int       @default(0) @map("total_tokens")
@@ -666,8 +662,8 @@ model TaskTrace {
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  owner       User           @relation("TaskTraceOwner", fields: [ownerId], references: [id])
-  masterAgent AgentRegistry? @relation("TaskTraceMasterAgent", fields: [masterAgentId], references: [id])
+  owner       User           @relation("TraceOwner", fields: [ownerId], references: [id])
+  masterAgent AgentRegistry? @relation("TraceMasterAgent", fields: [masterAgentId], references: [id])
   sessions    TraceSession[]
 
   @@index([ownerId])
@@ -677,12 +673,12 @@ model TaskTrace {
 }
 
 model TraceSession {
-  id              String    @id @default(uuid())
+  id              String    @id @default(cuid())
   taskTraceId     String    @map("task_trace_id")
   agentId         String    @map("agent_id")
   parentSessionId String?   @map("parent_session_id")
   delegatedBy     String?   @map("delegated_by")
-  instruction     String?   @db.Text
+  instruction     String?
   status          String    @default("running")
   cost            Decimal   @default(0) @db.Decimal(10, 4)
   tokensIn        Int       @default(0) @map("tokens_in")
@@ -693,37 +689,36 @@ model TraceSession {
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  taskTrace     TaskTrace      @relation(fields: [taskTraceId], references: [id])
-  agent         AgentRegistry  @relation("TraceSessionAgent", fields: [agentId], references: [id])
-  parentSession TraceSession?  @relation("TraceSessionHierarchy", fields: [parentSessionId], references: [id])
-  childSessions TraceSession[] @relation("TraceSessionHierarchy")
-  delegator     AgentRegistry? @relation("TraceSessionDelegator", fields: [delegatedBy], references: [id])
-  events        SessionEvent[]
+  taskTrace      TaskTrace      @relation(fields: [taskTraceId], references: [id])
+  agent          AgentRegistry  @relation("TraceSessionAgent", fields: [agentId], references: [id])
+  parentSession  TraceSession?  @relation("SessionHierarchy", fields: [parentSessionId], references: [id])
+  childSessions  TraceSession[] @relation("SessionHierarchy")
+  delegator      AgentRegistry? @relation("TraceSessionDelegator", fields: [delegatedBy], references: [id])
+  events         SessionEvent[]
 
   @@index([taskTraceId])
   @@index([agentId])
   @@index([parentSessionId])
-  @@index([status])
   @@map("trace_sessions")
 }
 
 model SessionEvent {
-  id          String   @id @default(uuid())
+  id          String   @id @default(cuid())
   sessionId   String   @map("session_id")
   type        String
+  content     String?
+  timestamp   DateTime @default(now())
   fromAgentId String?  @map("from_agent_id")
   toAgentId   String?  @map("to_agent_id")
-  content     String?  @db.Text
-  metadata    Json     @default("{}")
   tokenCount  Int      @default(0) @map("token_count")
   cost        Decimal  @default(0) @db.Decimal(10, 6)
   durationMs  Int?     @map("duration_ms")
-  timestamp   DateTime @default(now())
+  metadata    Json     @default("{}")
 
   // Relations
-  session   TraceSession  @relation(fields: [sessionId], references: [id])
-  fromAgent AgentRegistry? @relation("SessionEventFromAgent", fields: [fromAgentId], references: [id])
-  toAgent   AgentRegistry? @relation("SessionEventToAgent", fields: [toAgentId], references: [id])
+  session   TraceSession   @relation(fields: [sessionId], references: [id])
+  fromAgent AgentRegistry? @relation("EventFromAgent", fields: [fromAgentId], references: [id])
+  toAgent   AgentRegistry? @relation("EventToAgent", fields: [toAgentId], references: [id])
 
   @@index([sessionId])
   @@index([type])
