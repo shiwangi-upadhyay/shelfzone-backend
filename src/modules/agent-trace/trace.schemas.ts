@@ -31,6 +31,10 @@ export const agentIdParamSchema = z.object({
   agentId: z.string(),
 });
 
+export const agentUuidParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
 export const sessionEventsQuerySchema = z.object({
   type: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),

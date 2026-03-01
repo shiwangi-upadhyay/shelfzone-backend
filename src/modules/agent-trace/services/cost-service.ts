@@ -138,12 +138,13 @@ export async function getOrgCostRollup() {
       managerId: true,
       userId: true,
       department: { select: { id: true, name: true } },
+      designation: { select: { id: true, title: true, level: true } },
     },
   });
 
   // Get all agents with their creator info
   const agents = await prisma.agentRegistry.findMany({
-    select: { id: true, name: true, status: true, createdBy: true },
+    select: { id: true, name: true, status: true, createdBy: true, model: true },
   });
 
   // Get all session costs grouped by agent
@@ -166,6 +167,7 @@ export async function getOrgCostRollup() {
         id: a.id,
         name: a.name,
         status: a.status,
+        model: a.model,
         totalCost: c?.cost ?? 0,
         sessionCount: c?.sessions ?? 0,
       });
@@ -179,6 +181,8 @@ export async function getOrgCostRollup() {
       employeeId: e.id,
       name: `${e.firstName} ${e.lastName}`,
       managerId: e.managerId,
+      designation: e.designation?.title ?? null,
+      designationLevel: e.designation?.level ?? null,
       department: e.department,
       agents: ags,
       totalCost: ags.reduce((sum: number, a: any) => sum + a.totalCost, 0),

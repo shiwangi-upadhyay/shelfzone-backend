@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { instructSchema, traceParamsSchema } from './gateway.schemas.js';
+import { instructSchema, executeMultiSchema, traceParamsSchema } from './gateway.schemas.js';
 import * as gatewayService from './gateway.service.js';
 import { getUserDecryptedKey } from '../api-keys/api-key.service.js';
 
@@ -9,12 +9,10 @@ export async function instructHandler(request: FastifyRequest, reply: FastifyRep
     return reply.status(400).send({ error: 'Validation Error', message: parsed.error.issues[0].message });
   }
 
-  // Check API key BEFORE creating trace (unless simulation mode)
-  if (process.env.USE_SIMULATION !== 'true') {
-    const apiKey = await getUserDecryptedKey(request.user!.userId);
-    if (!apiKey) {
-      return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
-    }
+  // Check API key BEFORE creating trace
+  const apiKey = await getUserDecryptedKey(request.user!.userId);
+  if (!apiKey) {
+    return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
   }
 
   try {
@@ -24,18 +22,39 @@ export async function instructHandler(request: FastifyRequest, reply: FastifyRep
       parsed.data.masterAgentId,
     );
 
-    // Use real Anthropic API unless USE_SIMULATION=true
-    if (process.env.USE_SIMULATION === 'true') {
-      gatewayService.simulateAgentWork(traceId, sessionId, agentId).catch((err) => {
-        console.error('Simulation failed:', err);
-      });
-    } else {
-      gatewayService.executeRealAnthropicCall(traceId, sessionId, agentId, request.user!.userId, parsed.data.instruction).catch((err) => {
-        console.error('Anthropic API call failed:', err);
-      });
-    }
+    // Execute real Anthropic API call
+    gatewayService.executeRealAnthropicCall(traceId, sessionId, agentId, request.user!.userId, parsed.data.instruction).catch((err) => {
+      console.error('Anthropic API call failed:', err);
+    });
 
     return reply.status(201).send({ data: { traceId, sessionId } });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; error?: string; message?: string };
+    return reply.status(e.statusCode ?? 500).send({ error: e.error ?? 'Internal Error', message: e.message });
+  }
+}
+
+export async function executeMultiHandler(request: FastifyRequest, reply: FastifyReply) {
+  const parsed = executeMultiSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.status(400).send({ error: 'Validation Error', message: parsed.error.issues[0].message });
+  }
+
+  // Check API key BEFORE creating trace
+  const apiKey = await getUserDecryptedKey(request.user!.userId);
+  if (!apiKey) {
+    return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
+  }
+
+  try {
+    const { traceId } = await gatewayService.executeMultiAgent(
+      request.user!.userId,
+      parsed.data.agentIds,
+      parsed.data.instruction,
+      parsed.data.mode,
+    );
+
+    return reply.status(201).send({ data: { traceId } });
   } catch (err: unknown) {
     const e = err as { statusCode?: number; error?: string; message?: string };
     return reply.status(e.statusCode ?? 500).send({ error: e.error ?? 'Internal Error', message: e.message });
@@ -82,13 +101,27 @@ export async function streamHandler(request: FastifyRequest, reply: FastifyReply
     try {
       const events = await gatewayService.getSessionEventsAfter(traceId, lastTimestamp);
       for (const event of events) {
+        // Map internal event types to frontend-friendly event names
+        let eventType = event.type;
+        if (event.type === 'agent:thinking') eventType = 'thinking';
+        else if (event.type === 'agent:decision') eventType = 'decision';
+        else if (event.type === 'agent:delegation') eventType = 'delegation';
+        else if (event.type === 'agent:executing') eventType = 'executing';
+        else if (event.type === 'agent:completion') eventType = 'completion';
+        else if (event.type === 'agent:error') eventType = 'error';
+        else if (event.type === 'agent:message') eventType = 'message';
+        else if (event.type === 'agent:message_chunk') eventType = 'message_chunk';
+
         const payload = JSON.stringify({
+          event: eventType,
           id: event.id,
           type: event.type,
           content: event.content,
           timestamp: event.timestamp,
-          fromAgent: event.fromAgent,
-          toAgent: event.toAgent,
+          agentId: event.fromAgent?.id || event.fromAgentId,
+          agentName: event.fromAgent?.name,
+          toAgentId: event.toAgent?.id || event.toAgentId,
+          toAgentName: event.toAgent?.name,
           tokenCount: event.tokenCount,
           cost: event.cost,
           durationMs: event.durationMs,
