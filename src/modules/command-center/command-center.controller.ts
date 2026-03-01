@@ -1,6 +1,8 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { sendMessageSchema, SendMessageInput } from './command-center.schemas.js';
-import { streamMessage } from './command-center.service.js';
+import { streamMessage, calculateCost } from './command-center.service.js';
+import { prisma } from '../../lib/prisma.js';
+import { Prisma } from '@prisma/client';
 
 export async function handleSendMessage(
   request: FastifyRequest,
@@ -19,21 +21,111 @@ export async function handleSendMessage(
   const userId = request.user!.userId;
 
   try {
-    // Get the response from service (non-streaming fallback)
     const result = await streamMessage(userId, agentId, conversationId, message);
 
-    // Return JSON response
-    return reply.status(200).send({
-      success: true,
-      data: {
-        message: result.message,
-        inputTokens: result.inputTokens,
-        outputTokens: result.outputTokens,
-        totalCost: result.totalCost,
-        traceSessionId: result.traceSessionId,
-        taskTraceId: result.taskTraceId,
-      },
+    // Set SSE headers
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
     });
+
+    const reader = result.body.getReader();
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+
+    let buffer = '';
+    let fullResponse = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Decode and buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete lines
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+
+          try {
+            const event = JSON.parse(data);
+
+            // Extract text chunks
+            if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+              const text = event.delta.text;
+              fullResponse += text;
+
+              // Send chunk to frontend
+              reply.raw.write(encoder.encode(`event: chunk\ndata: ${JSON.stringify({ text })}\n\n`));
+            }
+
+            // Capture tokens
+            if (event.type === 'message_start') {
+              inputTokens = event.message?.usage?.input_tokens || 0;
+            }
+            if (event.type === 'message_delta') {
+              outputTokens += event.usage?.output_tokens || 0;
+            }
+          } catch {}
+        }
+      }
+
+      // Save to database (after streaming completes)
+      const cost = calculateCost(result.agentModel, inputTokens, outputTokens);
+      const completedAt = new Date();
+      const durationMs = completedAt.getTime() - result.startedAt.getTime();
+
+      // Update trace records
+      await prisma.traceSession.update({
+        where: { id: result.traceSessionId },
+        data: {
+          status: 'success',
+          cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
+          tokensIn: inputTokens,
+          tokensOut: outputTokens,
+          durationMs,
+          completedAt,
+        },
+      });
+
+      await prisma.taskTrace.update({
+        where: { id: result.taskTraceId },
+        data: {
+          status: 'completed',
+          totalCost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
+          totalTokens: inputTokens + outputTokens,
+          agentsUsed: 1,
+          completedAt,
+        },
+      });
+
+      // Save assistant response to database
+      await prisma.message.create({
+        data: {
+          conversationId: result.conversationId,
+          role: 'assistant',
+          content: fullResponse,
+          tokenCount: outputTokens,
+          cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
+          traceSessionId: result.traceSessionId,
+        },
+      });
+
+      // Send final events
+      reply.raw.write(encoder.encode(`event: cost\ndata: ${JSON.stringify({ inputTokens, outputTokens, totalCost: cost.totalCost })}\n\n`));
+      reply.raw.write(encoder.encode(`event: done\ndata: {}\n\n`));
+    } finally {
+      reply.raw.end();
+    }
   } catch (error: any) {
     const statusCode = error.statusCode || 500;
     const errorMessage = error.message || 'Internal server error';

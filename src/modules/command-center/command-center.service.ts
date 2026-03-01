@@ -28,13 +28,13 @@ function calculateCost(model: string, inputTokens: number, outputTokens: number)
   };
 }
 
-interface MessageResult {
-  message: string;
-  inputTokens: number;
-  outputTokens: number;
-  totalCost: number;
+interface StreamResult {
+  body: ReadableStream<Uint8Array>;
   traceSessionId: string;
   taskTraceId: string;
+  conversationId: string;
+  agentModel: string;
+  startedAt: Date;
 }
 
 export async function streamMessage(
@@ -42,7 +42,7 @@ export async function streamMessage(
   agentId: string,
   conversationId: string | null | undefined,
   message: string,
-): Promise<MessageResult> {
+): Promise<StreamResult> {
   // 1. Get user's Anthropic API key
   const apiKey = await getUserDecryptedKey(userId);
   if (!apiKey) {
@@ -125,7 +125,7 @@ export async function streamMessage(
     max_tokens: agent.maxTokens,
     temperature: agent.temperature,
     messages,
-    stream: false, // ← CHANGED FOR NON-STREAMING FALLBACK
+    stream: true, // ← Enable streaming
   };
 
   // Add system prompt if provided
@@ -158,7 +158,7 @@ export async function streamMessage(
     },
   });
 
-  // 5. Call Anthropic API (non-streaming)
+  // 5. Call Anthropic API with streaming
   const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -169,7 +169,7 @@ export async function streamMessage(
     body: JSON.stringify(requestBody),
   });
 
-  if (!anthropicRes.ok) {
+  if (!anthropicRes.ok || !anthropicRes.body) {
     const errorBody = await anthropicRes.text();
     
     // Log failure
@@ -197,62 +197,16 @@ export async function streamMessage(
     };
   }
 
-  // 6. Parse JSON response
-  const responseData = await anthropicRes.json();
-
-  // Extract text and usage
-  const fullText = responseData.content[0]?.text || '';
-  const inputTokens = responseData.usage.input_tokens || 0;
-  const outputTokens = responseData.usage.output_tokens || 0;
-
-  // Calculate cost
-  const cost = calculateCost(agent.model, inputTokens, outputTokens);
-  const completedAt = new Date();
-  const durationMs = completedAt.getTime() - startedAt.getTime();
-
-  // Update trace records
-  await prisma.traceSession.update({
-    where: { id: traceSession.id },
-    data: {
-      status: 'success',
-      cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
-      tokensIn: inputTokens,
-      tokensOut: outputTokens,
-      durationMs,
-      completedAt,
-    },
-  });
-
-  await prisma.taskTrace.update({
-    where: { id: taskTrace.id },
-    data: {
-      status: 'completed',
-      totalCost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
-      totalTokens: inputTokens + outputTokens,
-      agentsUsed: 1,
-      completedAt,
-    },
-  });
-
-  // Save assistant response to database with link to trace session
-  await prisma.message.create({
-    data: {
-      conversationId: conversation.id,
-      role: 'assistant',
-      content: fullText,
-      tokenCount: outputTokens,
-      cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
-      traceSessionId: traceSession.id,
-    },
-  });
-
-  // Return response as JSON (NOT SSE)
+  // Return the body directly - let controller handle streaming
   return {
-    message: fullText,
-    inputTokens,
-    outputTokens,
-    totalCost: cost.totalCost,
+    body: anthropicRes.body,
     traceSessionId: traceSession.id,
     taskTraceId: taskTrace.id,
+    conversationId: conversation.id,
+    agentModel: agent.model,
+    startedAt,
   };
 }
+
+// Helper functions for controller to use
+export { calculateCost };
