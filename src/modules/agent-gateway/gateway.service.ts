@@ -177,7 +177,21 @@ export async function executeRealAnthropicCall(
           }
 
           if (event.type === 'content_block_delta' && event.delta?.text) {
-            fullResponse += event.delta.text;
+            const chunk = event.delta.text;
+            fullResponse += chunk;
+            
+            // Emit chunk event immediately for real-time streaming
+            await prisma.sessionEvent.create({
+              data: {
+                sessionId,
+                type: 'agent:message_chunk',
+                content: chunk,
+                fromAgentId: agentId,
+                tokenCount: 0,
+                cost: 0,
+                metadata: { model: agent.model },
+              },
+            });
           }
 
           if (event.type === 'message_delta') {
@@ -187,9 +201,10 @@ export async function executeRealAnthropicCall(
       }
     }
 
-    // Create message event with full response
+    // Calculate final costs
     const costs = calculateCost(agent.model, inputTokens, outputTokens);
 
+    // Create final message event with full response for storage
     if (fullResponse) {
       await prisma.sessionEvent.create({
         data: {
