@@ -1,8 +1,8 @@
 import { z } from 'zod';
 
 export const sendMessageSchema = z.object({
-  agentId: z.string().cuid(),
-  conversationId: z.string().cuid().optional().nullable(),
+  agentId: z.string().min(1, 'Agent ID is required'),
+  conversationId: z.string().optional().nullable(),
   message: z.string().min(1, 'Message cannot be empty'),
 });
 
