@@ -28,8 +28,11 @@ function calculateCost(model: string, inputTokens: number, outputTokens: number)
   };
 }
 
-interface StreamResult {
-  stream: ReadableStream<Uint8Array>;
+interface MessageResult {
+  message: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalCost: number;
   traceSessionId: string;
   taskTraceId: string;
 }
@@ -39,7 +42,7 @@ export async function streamMessage(
   agentId: string,
   conversationId: string | null | undefined,
   message: string,
-): Promise<StreamResult> {
+): Promise<MessageResult> {
   // 1. Get user's Anthropic API key
   const apiKey = await getUserDecryptedKey(userId);
   if (!apiKey) {
@@ -122,7 +125,7 @@ export async function streamMessage(
     max_tokens: agent.maxTokens,
     temperature: agent.temperature,
     messages,
-    stream: true,
+    stream: false, // ← CHANGED FOR NON-STREAMING FALLBACK
   };
 
   // Add system prompt if provided
@@ -155,7 +158,7 @@ export async function streamMessage(
     },
   });
 
-  // 5. Call Anthropic API with streaming
+  // 5. Call Anthropic API (non-streaming)
   const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -166,7 +169,7 @@ export async function streamMessage(
     body: JSON.stringify(requestBody),
   });
 
-  if (!anthropicRes.ok || !anthropicRes.body) {
+  if (!anthropicRes.ok) {
     const errorBody = await anthropicRes.text();
     
     // Log failure
@@ -194,129 +197,61 @@ export async function streamMessage(
     };
   }
 
-  // 6. Create transform stream for SSE format
-  const reader = anthropicRes.body.getReader();
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheCreationTokens = 0;
-  let fullResponse = '';
-  let buffer = ''; // SSE line buffer for chunks split mid-event
+  // 6. Parse JSON response
+  const responseData = await anthropicRes.json();
 
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const { done, value } = await reader.read();
+  // Extract text and usage
+  const fullText = responseData.content[0]?.text || '';
+  const inputTokens = responseData.usage.input_tokens || 0;
+  const outputTokens = responseData.usage.output_tokens || 0;
 
-      if (done) {
-        // Stream complete - calculate cost and save
-        const cost = calculateCost(agent.model, inputTokens, outputTokens);
-        const completedAt = new Date();
-        const durationMs = completedAt.getTime() - startedAt.getTime();
+  // Calculate cost
+  const cost = calculateCost(agent.model, inputTokens, outputTokens);
+  const completedAt = new Date();
+  const durationMs = completedAt.getTime() - startedAt.getTime();
 
-        // Update trace records
-        await prisma.traceSession.update({
-          where: { id: traceSession.id },
-          data: {
-            status: 'success',
-            cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
-            tokensIn: inputTokens,
-            tokensOut: outputTokens,
-            durationMs,
-            completedAt,
-          },
-        });
-
-        await prisma.taskTrace.update({
-          where: { id: taskTrace.id },
-          data: {
-            status: 'completed',
-            totalCost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
-            totalTokens: inputTokens + outputTokens,
-            agentsUsed: 1,
-            completedAt,
-          },
-        });
-
-        // Save assistant response to database with link to trace session
-        await prisma.message.create({
-          data: {
-            conversationId: conversation.id,
-            role: 'assistant',
-            content: fullResponse,
-            tokenCount: outputTokens,
-            cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
-            traceSessionId: traceSession.id,
-          },
-        });
-
-        // Send cost event
-        const costEvent = `event: cost\ndata: ${JSON.stringify({
-          inputTokens,
-          outputTokens,
-          totalCost: cost.totalCost,
-        })}\n\n`;
-        controller.enqueue(encoder.encode(costEvent));
-
-        // Send done event
-        const doneEvent = `event: done\ndata: {}\n\n`;
-        controller.enqueue(encoder.encode(doneEvent));
-
-        controller.close();
-        return;
-      }
-
-      // Parse Anthropic SSE and convert to our format
-      // Decode and append to buffer
-      const text = new TextDecoder().decode(value);
-      buffer += text;
-
-      // Process complete lines only
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const jsonStr = line.slice(6).trim();
-        if (jsonStr === '[DONE]') continue;
-
-        try {
-          const evt = JSON.parse(jsonStr);
-
-          // Capture usage from message_start
-          if (evt.type === 'message_start' && evt.message?.usage) {
-            inputTokens = evt.message.usage.input_tokens || 0;
-            cacheReadTokens = evt.message.usage.cache_read_input_tokens || 0;
-            cacheCreationTokens = evt.message.usage.cache_creation_input_tokens || 0;
-          }
-
-          // Capture incremental output tokens from message_delta
-          if (evt.type === 'message_delta' && evt.usage) {
-            outputTokens += evt.usage.output_tokens || 0;
-          }
-
-          // Extract text from content_block_delta
-          if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta') {
-            const textChunk = evt.delta.text;
-            fullResponse += textChunk;
-
-            // Send chunk event to frontend
-            const chunkEvent = `event: chunk\ndata: ${JSON.stringify({ text: textChunk })}\n\n`;
-            controller.enqueue(encoder.encode(chunkEvent));
-          }
-        } catch (err) {
-          // Skip non-JSON lines
-        }
-      }
-    },
-
-    cancel() {
-      reader.cancel();
+  // Update trace records
+  await prisma.traceSession.update({
+    where: { id: traceSession.id },
+    data: {
+      status: 'success',
+      cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
+      tokensIn: inputTokens,
+      tokensOut: outputTokens,
+      durationMs,
+      completedAt,
     },
   });
 
+  await prisma.taskTrace.update({
+    where: { id: taskTrace.id },
+    data: {
+      status: 'completed',
+      totalCost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
+      totalTokens: inputTokens + outputTokens,
+      agentsUsed: 1,
+      completedAt,
+    },
+  });
+
+  // Save assistant response to database with link to trace session
+  await prisma.message.create({
+    data: {
+      conversationId: conversation.id,
+      role: 'assistant',
+      content: fullText,
+      tokenCount: outputTokens,
+      cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
+      traceSessionId: traceSession.id,
+    },
+  });
+
+  // Return response as JSON (NOT SSE)
   return {
-    stream,
+    message: fullText,
+    inputTokens,
+    outputTokens,
+    totalCost: cost.totalCost,
     traceSessionId: traceSession.id,
     taskTraceId: taskTrace.id,
   };
