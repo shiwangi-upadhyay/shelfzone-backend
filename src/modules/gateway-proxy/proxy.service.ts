@@ -129,7 +129,7 @@ export async function proxyChatRequest(
     where: { id: traceSession.id },
     data: {
       status,
-      cost: new Prisma.Decimal(cost.toFixed(4)),
+      cost: new Prisma.Decimal((Number(cost) || 0).toFixed(4)),
       tokensIn: usage.inputTokens,
       tokensOut: usage.outputTokens,
       durationMs,
@@ -141,7 +141,7 @@ export async function proxyChatRequest(
     where: { id: taskTrace.id },
     data: {
       status: status === 'success' ? 'completed' : 'failed',
-      totalCost: new Prisma.Decimal(cost.toFixed(4)),
+      totalCost: new Prisma.Decimal((Number(cost) || 0).toFixed(4)),
       totalTokens: usage.inputTokens + usage.outputTokens,
       agentsUsed: 1,
       completedAt,
@@ -266,7 +266,7 @@ export async function proxyStreamRequest(
           where: { id: traceSession.id },
           data: {
             status: 'success',
-            cost: new Prisma.Decimal(finalCost.toFixed(4)),
+            cost: new Prisma.Decimal((Number(finalCost) || 0).toFixed(4)),
             tokensIn: finalInputTokens,
             tokensOut: finalOutputTokens,
             durationMs,
@@ -277,7 +277,7 @@ export async function proxyStreamRequest(
           where: { id: taskTrace.id },
           data: {
             status: 'completed',
-            totalCost: new Prisma.Decimal(finalCost.toFixed(4)),
+            totalCost: new Prisma.Decimal((Number(finalCost) || 0).toFixed(4)),
             totalTokens: finalInputTokens + finalOutputTokens,
             agentsUsed: 1,
             completedAt,

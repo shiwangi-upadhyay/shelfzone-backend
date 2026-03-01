@@ -33,6 +33,7 @@ import billingRoutes from './modules/billing/billing.routes.js';
 import agentRequestRoutes from './modules/agent-requests/agent-request.routes.js';
 import gatewayProxyRoutes from './modules/gateway-proxy/proxy.routes.js';
 import gatewayKeyRoutes from './modules/settings/gateway-key.routes.js';
+import commandCenterRoutes from './modules/command-center/command-center.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -81,6 +82,7 @@ await app.register(traceRoutes);
 
 // Agent Gateway (Command Center)
 await app.register(agentGatewayRoutes);
+await app.register(commandCenterRoutes, { prefix: '/api/command-center' });
 await app.register(userApiKeyRoutes);
 
 // Settings

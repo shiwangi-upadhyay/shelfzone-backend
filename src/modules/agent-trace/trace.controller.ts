@@ -6,6 +6,7 @@ import {
   idParamSchema,
   traceIdParamSchema,
   agentIdParamSchema,
+  agentUuidParamSchema,
   sessionEventsQuerySchema,
   paginationQuerySchema,
   createEventSchema,
@@ -142,7 +143,7 @@ export async function getSessionTimelineHandler(request: FastifyRequest, reply: 
 // ─── Analytics ───────────────────────────────────────────────────────
 
 export async function getAgentCostBreakdownHandler(request: FastifyRequest, reply: FastifyReply) {
-  const params = parseOrReply(idParamSchema, request.params, reply);
+  const params = parseOrReply(agentUuidParamSchema, request.params, reply);
   if (!params) return;
   try {
     const result = await costService.getSubAgentBreakdown(params.id);
@@ -176,7 +177,7 @@ export async function getTraceFlowHandler(request: FastifyRequest, reply: Fastif
 }
 
 export async function getAgentStatsHandler(request: FastifyRequest, reply: FastifyReply) {
-  const params = parseOrReply(idParamSchema, request.params, reply);
+  const params = parseOrReply(agentUuidParamSchema, request.params, reply);
   if (!params) return;
   const query = parseOrReply(agentStatsQuerySchema, request.query, reply);
   if (!query) return;

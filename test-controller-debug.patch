@@ -1,0 +1,10 @@
+--- src/modules/command-center/command-center.controller.ts
++++ src/modules/command-center/command-center.controller.ts
+@@ -37,6 +37,7 @@
+     try {
+       while (true) {
+         const { done, value } = await reader.read();
++        console.log('[CONTROLLER] Read chunk:', done ? 'DONE' : 'chunk size:' + value?.length);
+         if (done) break;
+         reply.raw.write(value);
+       }
