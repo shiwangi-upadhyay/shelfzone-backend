@@ -201,6 +201,7 @@ export async function streamMessage(
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
   let fullResponse = '';
+  let buffer = ''; // SSE line buffer for chunks split mid-event
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -266,8 +267,13 @@ export async function streamMessage(
       }
 
       // Parse Anthropic SSE and convert to our format
+      // Decode and append to buffer
       const text = new TextDecoder().decode(value);
-      const lines = text.split('\n');
+      buffer += text;
+
+      // Process complete lines only
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
       for (const line of lines) {
         if (!line.startsWith('data: ')) continue;
