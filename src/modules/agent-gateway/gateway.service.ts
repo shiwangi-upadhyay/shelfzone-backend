@@ -9,12 +9,23 @@ const COST_RATES: Record<string, { input: number; output: number }> = {
 };
 
 function calculateCost(model: string, inputTokens: number, outputTokens: number) {
+  // Validate inputs - must be >= 0
+  const safeInputTokens = Math.max(0, inputTokens || 0);
+  const safeOutputTokens = Math.max(0, outputTokens || 0);
+
   // Find matching rate by checking if model contains the key
   const rateKey = Object.keys(COST_RATES).find((k) => model.includes(k)) || Object.keys(COST_RATES)[0];
   const rates = COST_RATES[rateKey] || COST_RATES['claude-sonnet-4-5'];
-  const inputCost = (inputTokens / 1_000_000) * rates.input;
-  const outputCost = (outputTokens / 1_000_000) * rates.output;
-  return { inputCost, outputCost, totalCost: inputCost + outputCost };
+  const inputCost = (safeInputTokens / 1_000_000) * rates.input;
+  const outputCost = (safeOutputTokens / 1_000_000) * rates.output;
+  const totalCost = inputCost + outputCost;
+
+  // Final safety check - cost must be >= 0
+  return {
+    inputCost: Math.max(0, inputCost),
+    outputCost: Math.max(0, outputCost),
+    totalCost: Math.max(0, totalCost),
+  };
 }
 
 // Track active simulations so we can cancel them
@@ -33,6 +44,19 @@ export async function createTraceWithSession(
     });
     if (!agent) throw { statusCode: 400, error: 'Bad Request', message: 'No active agent found' };
     agentId = agent.id;
+  }
+
+  // Validate that the agent exists and is active
+  const agent = await prisma.agentRegistry.findUnique({
+    where: { id: agentId },
+  });
+
+  if (!agent) {
+    throw { statusCode: 404, error: 'Not Found', message: `Agent with ID ${agentId} not found` };
+  }
+
+  if (agent.status !== 'ACTIVE') {
+    throw { statusCode: 400, error: 'Bad Request', message: `Agent ${agent.name} is not active (status: ${agent.status})` };
   }
 
   const trace = await prisma.taskTrace.create({
