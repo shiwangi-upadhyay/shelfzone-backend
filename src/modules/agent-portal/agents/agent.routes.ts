@@ -8,6 +8,7 @@ import {
   listAgentsHandler,
   getAgentHandler,
   getAgentDetailHandler,
+  getAgentHierarchyHandler,
   healthCheckHandler,
 } from './agent.controller.js';
 
@@ -16,6 +17,12 @@ export default async function agentRoutes(app: FastifyInstance) {
     '/api/agent-portal/agents',
     { preHandler: [authenticate, requireRole('SUPER_ADMIN', 'HR_ADMIN')] },
     registerAgentHandler,
+  );
+
+  app.get(
+    '/api/agent-portal/agents/hierarchy',
+    { preHandler: [authenticate, requireRole('SUPER_ADMIN', 'HR_ADMIN', 'MANAGER')] },
+    getAgentHierarchyHandler,
   );
 
   app.get(

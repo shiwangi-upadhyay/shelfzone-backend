@@ -128,6 +128,18 @@ export async function archiveAgentHandler(request: FastifyRequest, reply: Fastif
   }
 }
 
+export async function getAgentHierarchyHandler(_request: FastifyRequest, reply: FastifyReply) {
+  try {
+    const hierarchy = await agentService.getAgentHierarchy();
+    return reply.send({ data: hierarchy });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; error?: string; message?: string };
+    return reply
+      .status(e.statusCode ?? 500)
+      .send({ error: e.error ?? 'Internal Error', message: e.message });
+  }
+}
+
 export async function listAgentsHandler(request: FastifyRequest, reply: FastifyReply) {
   const parsed = listAgentsQuerySchema.safeParse(request.query);
   if (!parsed.success) {

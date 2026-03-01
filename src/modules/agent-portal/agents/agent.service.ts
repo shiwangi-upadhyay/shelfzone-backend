@@ -160,6 +160,8 @@ export async function getAgents(query: ListAgentsQuery) {
       orderBy: { createdAt: 'desc' },
       include: {
         team: { select: { id: true, name: true } },
+        parentAgent: { select: { id: true, name: true, slug: true } },
+        childAgents: { select: { id: true, name: true, slug: true, model: true, description: true, status: true } },
       },
     }),
     prisma.agentRegistry.count({ where }),
@@ -171,11 +173,45 @@ export async function getAgents(query: ListAgentsQuery) {
   };
 }
 
+export async function getAgentHierarchy() {
+  const agents = await prisma.agentRegistry.findMany({
+    where: { status: 'ACTIVE' },
+    orderBy: { name: 'asc' },
+    include: {
+      parentAgent: { select: { id: true, name: true } },
+      childAgents: {
+        where: { status: 'ACTIVE' },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, slug: true, model: true, description: true, status: true, type: true },
+      },
+      team: { select: { id: true, name: true } },
+      creator: { select: { id: true, email: true } },
+    },
+  });
+
+  // Build tree: root agents (no parent) with nested children
+  const roots = agents.filter(a => !a.parentAgentId);
+  return roots.map(root => ({
+    ...root,
+    role: 'master',
+    children: root.childAgents.map(child => ({
+      ...child,
+      role: 'sub-agent',
+    })),
+  }));
+}
+
 export async function getAgentById(id: string) {
   const agent = await prisma.agentRegistry.findUnique({
     where: { id },
     include: {
       team: { select: { id: true, name: true } },
+      parentAgent: { select: { id: true, name: true, slug: true } },
+      childAgents: {
+        where: { status: 'ACTIVE' },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true, slug: true, model: true, description: true, status: true },
+      },
       dailyStats: {
         orderBy: { date: 'desc' },
         take: 7,
