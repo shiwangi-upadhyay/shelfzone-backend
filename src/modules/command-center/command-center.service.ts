@@ -68,12 +68,53 @@ export async function streamMessage(
     throw { statusCode: 400, error: 'Bad Request', message: `Agent ${agent.name} is not active (status: ${agent.status})` };
   }
 
-  // 3. Build messages array
-  // For now, just system prompt + new user message
-  // In Step 6, we'll load conversation history here
-  const messages: Array<{ role: string; content: string }> = [
-    { role: 'user', content: message },
-  ];
+  // 3. Get or create conversation
+  let conversation = await prisma.conversation.findUnique({
+    where: {
+      userId_agentId: {
+        userId,
+        agentId,
+      },
+    },
+  });
+
+  if (!conversation) {
+    // Auto-generate title from first user message (max 50 chars)
+    const title = message.length > 50 ? message.substring(0, 50) + '...' : message;
+    conversation = await prisma.conversation.create({
+      data: {
+        userId,
+        agentId,
+        title,
+      },
+    });
+  }
+
+  // 4. Load conversation history (last 10 messages)
+  const history = await prisma.message.findMany({
+    where: { conversationId: conversation.id },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+    select: {
+      role: true,
+      content: true,
+    },
+  });
+
+  // Reverse to get chronological order (oldest first)
+  const messages: Array<{ role: string; content: string }> = history.reverse();
+
+  // 5. Save user message to database BEFORE API call
+  const userMessage = await prisma.message.create({
+    data: {
+      conversationId: conversation.id,
+      role: 'user',
+      content: message,
+    },
+  });
+
+  // Add current user message to context
+  messages.push({ role: 'user', content: message });
 
   // Build request body
   const requestBody: any = {
@@ -193,6 +234,18 @@ export async function streamMessage(
             totalTokens: inputTokens + outputTokens,
             agentsUsed: 1,
             completedAt,
+          },
+        });
+
+        // Save assistant response to database with link to trace session
+        await prisma.message.create({
+          data: {
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: fullResponse,
+            tokenCount: outputTokens,
+            cost: new Prisma.Decimal(cost.totalCost.toFixed(6)),
+            traceSessionId: traceSession.id,
           },
         });
 

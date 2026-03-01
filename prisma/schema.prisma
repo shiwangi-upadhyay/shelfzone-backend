@@ -33,6 +33,7 @@ model User {
   taskTraces             TaskTrace[]        @relation("TraceOwner")
   userApiKey             UserApiKey?
   userGatewayKey         UserGatewayKey?
+  conversations          Conversation[]
 
   @@map("users")
 }
@@ -374,6 +375,7 @@ model AgentRegistry {
   masterTraces        TaskTrace[]       @relation("TraceMasterAgent")
   traceSessions       TraceSession[]    @relation("TraceSessionAgent")
   delegatedSessions   TraceSession[]    @relation("TraceSessionDelegator")
+  conversations       Conversation[]
 
   @@map("agent_registry")
 }
@@ -589,6 +591,7 @@ model TraceSession {
   parentSession   TraceSession?  @relation("SessionHierarchy", fields: [parentSessionId], references: [id])
   childSessions   TraceSession[] @relation("SessionHierarchy")
   taskTrace       TaskTrace      @relation(fields: [taskTraceId], references: [id])
+  messages        Message[]
 
   @@index([taskTraceId])
   @@index([agentId])
@@ -749,4 +752,38 @@ enum AgentRequestStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id")
+  agentId   String    @map("agent_id")
+  title     String
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent     AgentRegistry @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@unique([userId, agentId])
+  @@index([userId])
+  @@index([agentId])
+  @@map("conversations")
+}
+
+model Message {
+  id               String        @id @default(cuid())
+  conversationId   String        @map("conversation_id")
+  role             String
+  content          String
+  tokenCount       Int?          @map("token_count")
+  cost             Decimal?      @db.Decimal(10, 6)
+  traceSessionId   String?       @map("trace_session_id")
+  createdAt        DateTime      @default(now()) @map("created_at")
+  conversation     Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  traceSession     TraceSession? @relation(fields: [traceSessionId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([traceSessionId])
+  @@map("messages")
 }
