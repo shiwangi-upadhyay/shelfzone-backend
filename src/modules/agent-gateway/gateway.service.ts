@@ -28,9 +28,6 @@ function calculateCost(model: string, inputTokens: number, outputTokens: number)
   };
 }
 
-// Track active simulations so we can cancel them
-const activeSimulations = new Map<string, NodeJS.Timeout[]>();
-
 export async function createTraceWithSession(
   ownerId: string,
   instruction: string,
@@ -68,6 +65,156 @@ export async function createTraceWithSession(
   });
 
   return { traceId: trace.id, sessionId: session.id, agentId };
+}
+
+export async function executeMultiAgent(
+  ownerId: string,
+  agentIds: string[],
+  instruction: string,
+  mode: 'parallel' | 'sequential' | 'delegate',
+) {
+  // Validate all agents exist and are active
+  const agents = await prisma.agentRegistry.findMany({
+    where: { id: { in: agentIds } },
+  });
+
+  if (agents.length !== agentIds.length) {
+    const foundIds = agents.map(a => a.id);
+    const missing = agentIds.filter(id => !foundIds.includes(id));
+    throw { statusCode: 404, error: 'Not Found', message: `Agent(s) not found: ${missing.join(', ')}` };
+  }
+
+  const inactive = agents.filter(a => a.status !== 'ACTIVE');
+  if (inactive.length > 0) {
+    throw { statusCode: 400, error: 'Bad Request', message: `Inactive agent(s): ${inactive.map(a => a.name).join(', ')}` };
+  }
+
+  // Create master trace
+  const masterAgentId = agentIds[0]; // First agent is master for tracking
+  const trace = await prisma.taskTrace.create({
+    data: {
+      ownerId,
+      masterAgentId,
+      instruction,
+      status: 'running',
+      agentsUsed: agentIds.length,
+    },
+  });
+
+  if (mode === 'delegate') {
+    // Delegate mode: Send to first agent (should be master like SHIWANGI) and let them delegate
+    const session = await prisma.traceSession.create({
+      data: {
+        taskTraceId: trace.id,
+        agentId: masterAgentId,
+        instruction,
+        status: 'running',
+      },
+    });
+
+    // Emit delegation event
+    await prisma.sessionEvent.create({
+      data: {
+        sessionId: session.id,
+        type: 'agent:decision',
+        content: `Delegating to master agent: ${agents[0].name}`,
+        fromAgentId: masterAgentId,
+        tokenCount: 0,
+        cost: 0,
+        metadata: { mode: 'delegate', totalAgents: agentIds.length },
+      },
+    });
+
+    // Execute
+    executeRealAnthropicCall(trace.id, session.id, masterAgentId, ownerId, instruction).catch(console.error);
+  } else if (mode === 'parallel') {
+    // Parallel: Execute all agents simultaneously
+    const sessions = await Promise.all(
+      agents.map(agent =>
+        prisma.traceSession.create({
+          data: {
+            taskTraceId: trace.id,
+            agentId: agent.id,
+            instruction,
+            status: 'running',
+          },
+        })
+      )
+    );
+
+    // Emit parallel execution events
+    for (const [idx, session] of sessions.entries()) {
+      await prisma.sessionEvent.create({
+        data: {
+          sessionId: session.id,
+          type: 'agent:executing',
+          content: `Starting parallel execution: ${agents[idx].name}`,
+          fromAgentId: agents[idx].id,
+          tokenCount: 0,
+          cost: 0,
+          metadata: { mode: 'parallel', agentIndex: idx, totalAgents: agents.length },
+        },
+      });
+
+      executeRealAnthropicCall(trace.id, session.id, agents[idx].id, ownerId, instruction).catch(console.error);
+    }
+  } else if (mode === 'sequential') {
+    // Sequential: Execute agents one by one
+    executeSequentialAgents(trace.id, agents, instruction, ownerId).catch(console.error);
+  }
+
+  return { traceId: trace.id };
+}
+
+async function executeSequentialAgents(
+  traceId: string,
+  agents: any[],
+  instruction: string,
+  ownerId: string,
+) {
+  for (const [idx, agent] of agents.entries()) {
+    const session = await prisma.traceSession.create({
+      data: {
+        taskTraceId: traceId,
+        agentId: agent.id,
+        instruction,
+        status: 'running',
+      },
+    });
+
+    await prisma.sessionEvent.create({
+      data: {
+        sessionId: session.id,
+        type: 'agent:executing',
+        content: `Sequential execution (${idx + 1}/${agents.length}): ${agent.name}`,
+        fromAgentId: agent.id,
+        tokenCount: 0,
+        cost: 0,
+        metadata: { mode: 'sequential', agentIndex: idx, totalAgents: agents.length },
+      },
+    });
+
+    await executeRealAnthropicCall(traceId, session.id, agent.id, ownerId, instruction);
+
+    // Wait for this session to complete before next
+    await new Promise((resolve) => {
+      const checkInterval = setInterval(async () => {
+        const updatedSession = await prisma.traceSession.findUnique({
+          where: { id: session.id },
+        });
+        if (updatedSession?.status === 'completed' || updatedSession?.status === 'error') {
+          clearInterval(checkInterval);
+          resolve(null);
+        }
+      }, 1000);
+    });
+  }
+
+  // Mark trace as complete after all sequential executions
+  await prisma.taskTrace.update({
+    where: { id: traceId },
+    data: { status: 'completed', completedAt: new Date() },
+  });
 }
 
 export async function executeRealAnthropicCall(
@@ -292,59 +439,6 @@ async function completeTrace(traceId: string, sessionId: string, status: string)
   });
 }
 
-// ─── Simulation (fallback) ───────────────────────────────────────
-
-export async function simulateAgentWork(traceId: string, masterSessionId: string, masterAgentId: string) {
-  const timeouts: NodeJS.Timeout[] = [];
-
-  const schedule = (ms: number, fn: () => Promise<void>) => {
-    const t = setTimeout(async () => {
-      try {
-        const trace = await prisma.taskTrace.findUnique({ where: { id: traceId } });
-        if (!trace || trace.status === 'cancelled') return;
-        if (trace.status === 'paused') { schedule(2000, fn); return; }
-        await fn();
-      } catch (e) { console.error('Simulation error:', e); }
-    }, ms);
-    timeouts.push(t);
-  };
-
-  activeSimulations.set(traceId, timeouts);
-
-  schedule(200, async () => {
-    await prisma.sessionEvent.create({ data: { sessionId: masterSessionId, type: 'trace:started', content: 'Task trace initiated', fromAgentId: masterAgentId, tokenCount: 0, cost: 0, metadata: {} } });
-  });
-
-  schedule(1000, async () => {
-    await prisma.sessionEvent.create({ data: { sessionId: masterSessionId, type: 'agent:thinking', content: 'Analyzing instruction and planning execution strategy...', fromAgentId: masterAgentId, tokenCount: 245, cost: 0.0037, durationMs: 820, metadata: { model: 'claude-opus-4-6' } } });
-  });
-
-  schedule(2000, async () => {
-    const subAgents = await prisma.agentRegistry.findMany({ where: { status: 'ACTIVE', id: { not: masterAgentId } }, take: 3 });
-    for (const sub of subAgents) {
-      await prisma.sessionEvent.create({ data: { sessionId: masterSessionId, type: 'agent:delegation', content: `Delegating sub-task to ${sub.name}`, fromAgentId: masterAgentId, toAgentId: sub.id, tokenCount: 180, cost: 0.0027, metadata: { delegatedAgent: sub.name, subTask: `Handle ${sub.type.toLowerCase()} operations` } } });
-      const subSession = await prisma.traceSession.create({ data: { taskTraceId: traceId, agentId: sub.id, parentSessionId: masterSessionId, delegatedBy: masterAgentId, instruction: `Sub-task for ${sub.name}`, status: 'running' } });
-      schedule(3000 + Math.random() * 1000, async () => { await prisma.sessionEvent.create({ data: { sessionId: subSession.id, type: 'agent:thinking', content: `${sub.name} analyzing delegated task...`, fromAgentId: sub.id, tokenCount: 320, cost: 0.0048, durationMs: 650, metadata: { model: 'claude-opus-4-6' } } }); });
-      schedule(4000 + Math.random() * 1000, async () => { await prisma.sessionEvent.create({ data: { sessionId: subSession.id, type: 'agent:tool_call', content: 'Executing database query', fromAgentId: sub.id, tokenCount: 150, cost: 0.0023, durationMs: 340, metadata: { tool: 'prisma_query', args: { table: 'employees' } } } }); });
-      schedule(5500 + Math.random() * 1000, async () => { await prisma.sessionEvent.create({ data: { sessionId: subSession.id, type: 'agent:tool_result', content: 'Query returned 42 records', fromAgentId: sub.id, tokenCount: 85, cost: 0.0013, durationMs: 120, metadata: { tool: 'prisma_query', resultSize: 42 } } }); });
-      schedule(6500 + Math.random() * 1500, async () => {
-        await prisma.sessionEvent.create({ data: { sessionId: subSession.id, type: 'agent:completion', content: `${sub.name} completed sub-task successfully`, fromAgentId: sub.id, tokenCount: 210, cost: 0.0032, durationMs: 450, metadata: { status: 'success' } } });
-        await prisma.traceSession.update({ where: { id: subSession.id }, data: { status: 'completed', completedAt: new Date(), cost: 0.0143, tokensIn: 520, tokensOut: 295 } });
-      });
-    }
-    await prisma.taskTrace.update({ where: { id: traceId }, data: { agentsUsed: subAgents.length + 1 } });
-  });
-
-  schedule(7500, async () => { await prisma.sessionEvent.create({ data: { sessionId: masterSessionId, type: 'cost:update', content: 'Running cost update', fromAgentId: masterAgentId, tokenCount: 0, cost: 0, metadata: { totalCost: 0.0389, totalTokens: 1845 } } }); });
-  schedule(8000, async () => { await prisma.sessionEvent.create({ data: { sessionId: masterSessionId, type: 'agent:message', content: 'All sub-agents have completed their tasks. Compiling final results...', fromAgentId: masterAgentId, tokenCount: 185, cost: 0.0028, durationMs: 380, metadata: {} } }); });
-  schedule(9000, async () => {
-    await prisma.sessionEvent.create({ data: { sessionId: masterSessionId, type: 'trace:completed', content: 'Task completed successfully', fromAgentId: masterAgentId, tokenCount: 95, cost: 0.0014, metadata: { totalCost: 0.0452, totalTokens: 2130, duration: 9000 } } });
-    await prisma.traceSession.update({ where: { id: masterSessionId }, data: { status: 'completed', completedAt: new Date(), cost: 0.0452, tokensIn: 1280, tokensOut: 850 } });
-    await prisma.taskTrace.update({ where: { id: traceId }, data: { status: 'completed', completedAt: new Date(), totalCost: 0.0452, totalTokens: 2130 } });
-    activeSimulations.delete(traceId);
-  });
-}
-
 // ─── Trace management ────────────────────────────────────────────
 
 export async function cancelTrace(traceId: string, ownerId: string) {
@@ -352,9 +446,6 @@ export async function cancelTrace(traceId: string, ownerId: string) {
   if (!trace) throw { statusCode: 404, error: 'Not Found', message: 'Trace not found' };
   if (trace.status === 'completed' || trace.status === 'cancelled')
     throw { statusCode: 400, error: 'Bad Request', message: `Trace is already ${trace.status}` };
-
-  const timers = activeSimulations.get(traceId);
-  if (timers) { timers.forEach(clearTimeout); activeSimulations.delete(traceId); }
 
   await prisma.traceSession.updateMany({ where: { taskTraceId: traceId, status: 'running' }, data: { status: 'cancelled', completedAt: new Date() } });
   return prisma.taskTrace.update({ where: { id: traceId }, data: { status: 'cancelled', completedAt: new Date() } });
