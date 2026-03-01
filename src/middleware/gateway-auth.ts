@@ -17,9 +17,9 @@ export async function gatewayAuth(request: FastifyRequest, reply: FastifyReply) 
       return reply.status(401).send({ error: 'Unauthorized', message: 'Invalid API key' });
     }
 
-    // Map to system owner (shiwangi@shelfex.com)
+    // Map to admin user (has Anthropic API key configured)
     const user = await prisma.user.findUnique({
-      where: { email: 'shiwangi@shelfex.com' },
+      where: { email: 'admin@shelfzone.com' },
       select: { id: true, email: true, role: true },
     });
 
