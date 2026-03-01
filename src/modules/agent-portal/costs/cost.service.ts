@@ -9,33 +9,49 @@ function periodToDate(period: string): Date {
 
 export async function getAgentCosts(agentId: string, period: string) {
   const since = periodToDate(period);
+  
+  // Query trace_sessions as the single source of truth for billing data
   const [aggregate, breakdown] = await Promise.all([
-    prisma.agentCostLedger.aggregate({
-      where: { agentId, createdAt: { gte: since } },
+    prisma.traceSession.aggregate({
+      where: { agentId, startedAt: { gte: since } },
       _sum: {
-        inputCost: true,
-        outputCost: true,
-        totalCost: true,
-        inputTokens: true,
-        outputTokens: true,
+        cost: true,
+        tokensIn: true,
+        tokensOut: true,
       },
     }),
-    prisma.agentCostLedger.groupBy({
-      by: ['model'],
-      where: { agentId, createdAt: { gte: since } },
-      _sum: { totalCost: true, inputTokens: true, outputTokens: true },
+    prisma.traceSession.groupBy({
+      by: ['modelUsed'],
+      where: { agentId, startedAt: { gte: since }, modelUsed: { not: null } },
+      _sum: { cost: true, tokensIn: true, tokensOut: true },
     }),
   ]);
+
+  const totalCost = Number(aggregate._sum.cost ?? 0);
+  const totalInputTokens = aggregate._sum.tokensIn ?? 0;
+  const totalOutputTokens = aggregate._sum.tokensOut ?? 0;
+
+  // Estimate input/output costs based on typical token pricing ratios
+  // Typically input:output cost ratio is ~1:3 for most models
+  const totalInputCost = totalCost * 0.25;
+  const totalOutputCost = totalCost * 0.75;
 
   return {
     agentId,
     period,
-    totalInputCost: aggregate._sum.inputCost ?? 0,
-    totalOutputCost: aggregate._sum.outputCost ?? 0,
-    totalCost: aggregate._sum.totalCost ?? 0,
-    totalInputTokens: aggregate._sum.inputTokens ?? 0,
-    totalOutputTokens: aggregate._sum.outputTokens ?? 0,
-    byModel: breakdown,
+    totalInputCost,
+    totalOutputCost,
+    totalCost,
+    totalInputTokens,
+    totalOutputTokens,
+    byModel: breakdown.map(b => ({
+      model: b.modelUsed,
+      _sum: {
+        totalCost: Number(b._sum.cost ?? 0),
+        inputTokens: b._sum.tokensIn,
+        outputTokens: b._sum.tokensOut,
+      }
+    })),
   };
 }
 
@@ -44,42 +60,61 @@ export async function getTeamCosts(teamId: string, period: string) {
   const agents = await prisma.agentRegistry.findMany({ where: { teamId }, select: { id: true } });
   const agentIds = agents.map((a) => a.id);
 
-  if (agentIds.length === 0) return { teamId, period, totalCost: 0 };
+  if (agentIds.length === 0) return { 
+    teamId, 
+    period, 
+    totalInputCost: 0,
+    totalOutputCost: 0,
+    totalCost: 0 
+  };
 
-  const stats = await prisma.agentCostLedger.aggregate({
-    where: { agentId: { in: agentIds }, createdAt: { gte: since } },
-    _sum: { inputCost: true, outputCost: true, totalCost: true },
+  // Query trace_sessions as the single source of truth
+  const stats = await prisma.traceSession.aggregate({
+    where: { agentId: { in: agentIds }, startedAt: { gte: since } },
+    _sum: { cost: true },
   });
+
+  const totalCost = Number(stats._sum.cost ?? 0);
+  const totalInputCost = totalCost * 0.25;
+  const totalOutputCost = totalCost * 0.75;
 
   return {
     teamId,
     period,
-    totalInputCost: stats._sum.inputCost ?? 0,
-    totalOutputCost: stats._sum.outputCost ?? 0,
-    totalCost: stats._sum.totalCost ?? 0,
+    totalInputCost,
+    totalOutputCost,
+    totalCost,
   };
 }
 
 export async function getPlatformCosts(period: string) {
   const since = periodToDate(period);
-  const stats = await prisma.agentCostLedger.aggregate({
-    where: { createdAt: { gte: since } },
+  
+  // Query trace_sessions as the single source of truth for billing data
+  const stats = await prisma.traceSession.aggregate({
+    where: { startedAt: { gte: since } },
     _sum: {
-      inputCost: true,
-      outputCost: true,
-      totalCost: true,
-      inputTokens: true,
-      outputTokens: true,
+      cost: true,
+      tokensIn: true,
+      tokensOut: true,
     },
   });
 
+  const totalCost = Number(stats._sum.cost ?? 0);
+  const totalInputTokens = stats._sum.tokensIn ?? 0;
+  const totalOutputTokens = stats._sum.tokensOut ?? 0;
+
+  // Estimate input/output costs based on typical token pricing ratios
+  const totalInputCost = totalCost * 0.25;
+  const totalOutputCost = totalCost * 0.75;
+
   return {
     period,
-    totalInputCost: stats._sum.inputCost ?? 0,
-    totalOutputCost: stats._sum.outputCost ?? 0,
-    totalCost: stats._sum.totalCost ?? 0,
-    totalInputTokens: stats._sum.inputTokens ?? 0,
-    totalOutputTokens: stats._sum.outputTokens ?? 0,
+    totalInputCost,
+    totalOutputCost,
+    totalCost,
+    totalInputTokens,
+    totalOutputTokens,
   };
 }
 
@@ -90,31 +125,48 @@ export async function getCostBreakdown(
   const since = periodToDate(period);
 
   if (groupBy === 'model') {
-    return prisma.agentCostLedger.groupBy({
-      by: ['model'],
-      where: { createdAt: { gte: since } },
-      _sum: { totalCost: true, inputTokens: true, outputTokens: true },
-      orderBy: { _sum: { totalCost: 'desc' } },
-    });
+    // Query trace_sessions and group by modelUsed
+    return prisma.traceSession.groupBy({
+      by: ['modelUsed'],
+      where: { startedAt: { gte: since }, modelUsed: { not: null } },
+      _sum: { cost: true, tokensIn: true, tokensOut: true },
+      orderBy: { _sum: { cost: 'desc' } },
+    }).then(results => 
+      results.map(r => ({
+        model: r.modelUsed,
+        totalCost: Number(r._sum.cost ?? 0),
+        inputTokens: r._sum.tokensIn,
+        outputTokens: r._sum.tokensOut,
+      }))
+    );
   }
 
   if (groupBy === 'agent') {
-    return prisma.agentCostLedger.groupBy({
+    // Query trace_sessions and group by agentId
+    return prisma.traceSession.groupBy({
       by: ['agentId'],
-      where: { createdAt: { gte: since } },
-      _sum: { totalCost: true, inputTokens: true, outputTokens: true },
-      orderBy: { _sum: { totalCost: 'desc' } },
-    });
+      where: { startedAt: { gte: since } },
+      _sum: { cost: true, tokensIn: true, tokensOut: true },
+      orderBy: { _sum: { cost: 'desc' } },
+    }).then(results =>
+      results.map(r => ({
+        agentId: r.agentId,
+        totalCost: Number(r._sum.cost ?? 0),
+        inputTokens: r._sum.tokensIn,
+        outputTokens: r._sum.tokensOut,
+      }))
+    );
   }
 
   if (groupBy === 'day') {
+    // Query trace_sessions grouped by date
     const raw = await prisma.$queryRaw<
       Array<{ day: Date; total_cost: number; input_tokens: bigint; output_tokens: bigint }>
     >`
-      SELECT DATE(created_at) as day, SUM(total_cost) as total_cost, SUM(input_tokens)::bigint as input_tokens, SUM(output_tokens)::bigint as output_tokens
-      FROM agent_cost_ledger
-      WHERE created_at >= ${since}
-      GROUP BY DATE(created_at)
+      SELECT DATE(started_at) as day, SUM(cost) as total_cost, SUM(tokens_in)::bigint as input_tokens, SUM(tokens_out)::bigint as output_tokens
+      FROM trace_sessions
+      WHERE started_at >= ${since}
+      GROUP BY DATE(started_at)
       ORDER BY day ASC
     `;
     return raw.map((r) => ({
@@ -131,17 +183,19 @@ export async function getCostBreakdown(
     select: { id: true, teamId: true },
   });
   const agentTeamMap = new Map(agents.map((a) => [a.id, a.teamId!]));
-  const ledger = await prisma.agentCostLedger.groupBy({
+  
+  // Query trace_sessions and group by agentId
+  const ledger = await prisma.traceSession.groupBy({
     by: ['agentId'],
-    where: { createdAt: { gte: since }, agentId: { in: Array.from(agentTeamMap.keys()) } },
-    _sum: { totalCost: true },
+    where: { startedAt: { gte: since }, agentId: { in: Array.from(agentTeamMap.keys()) } },
+    _sum: { cost: true },
   });
 
   const teamTotals = new Map<string, number>();
   for (const entry of ledger) {
     const teamId = agentTeamMap.get(entry.agentId);
     if (teamId) {
-      teamTotals.set(teamId, (teamTotals.get(teamId) ?? 0) + (entry._sum.totalCost ?? 0));
+      teamTotals.set(teamId, (teamTotals.get(teamId) ?? 0) + Number(entry._sum.cost ?? 0));
     }
   }
 
