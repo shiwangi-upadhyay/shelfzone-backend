@@ -3,6 +3,7 @@ import { authenticate } from '../../middleware/index.js';
 import { verifyAccessToken } from '../auth/auth.service.js';
 import {
   instructHandler,
+  executeMultiHandler,
   streamHandler,
   cancelHandler,
   pauseHandler,
@@ -32,6 +33,7 @@ async function authenticateWithQueryFallback(request: FastifyRequest, reply: Fas
 
 export default async function agentGatewayRoutes(app: FastifyInstance) {
   app.post('/api/agent-gateway/instruct', { preHandler: [authenticate] }, instructHandler);
+  app.post('/api/agent-gateway/execute-multi', { preHandler: [authenticate] }, executeMultiHandler);
   app.get('/api/agent-gateway/stream/:traceId', { preHandler: [authenticateWithQueryFallback] }, streamHandler);
   app.post('/api/agent-gateway/cancel/:traceId', { preHandler: [authenticate] }, cancelHandler);
   app.post('/api/agent-gateway/pause/:traceId', { preHandler: [authenticate] }, pauseHandler);

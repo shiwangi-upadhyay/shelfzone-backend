@@ -70,6 +70,168 @@ export async function createTraceWithSession(
   return { traceId: trace.id, sessionId: session.id, agentId };
 }
 
+export async function executeMultiAgent(
+  ownerId: string,
+  agentIds: string[],
+  instruction: string,
+  mode: 'parallel' | 'sequential' | 'delegate',
+) {
+  // Validate all agents exist and are active
+  const agents = await prisma.agentRegistry.findMany({
+    where: { id: { in: agentIds } },
+  });
+
+  if (agents.length !== agentIds.length) {
+    const foundIds = agents.map(a => a.id);
+    const missing = agentIds.filter(id => !foundIds.includes(id));
+    throw { statusCode: 404, error: 'Not Found', message: `Agent(s) not found: ${missing.join(', ')}` };
+  }
+
+  const inactive = agents.filter(a => a.status !== 'ACTIVE');
+  if (inactive.length > 0) {
+    throw { statusCode: 400, error: 'Bad Request', message: `Inactive agent(s): ${inactive.map(a => a.name).join(', ')}` };
+  }
+
+  // Create master trace
+  const masterAgentId = agentIds[0]; // First agent is master for tracking
+  const trace = await prisma.taskTrace.create({
+    data: {
+      ownerId,
+      masterAgentId,
+      instruction,
+      status: 'running',
+      agentsUsed: agentIds.length,
+    },
+  });
+
+  if (mode === 'delegate') {
+    // Delegate mode: Send to first agent (should be master like SHIWANGI) and let them delegate
+    const session = await prisma.traceSession.create({
+      data: {
+        taskTraceId: trace.id,
+        agentId: masterAgentId,
+        instruction,
+        status: 'running',
+      },
+    });
+
+    // Emit delegation event
+    await prisma.sessionEvent.create({
+      data: {
+        sessionId: session.id,
+        type: 'agent:decision',
+        content: `Delegating to master agent: ${agents[0].name}`,
+        fromAgentId: masterAgentId,
+        tokenCount: 0,
+        cost: 0,
+        metadata: { mode: 'delegate', totalAgents: agentIds.length },
+      },
+    });
+
+    // Execute
+    if (process.env.USE_SIMULATION === 'true') {
+      simulateAgentWork(trace.id, session.id, masterAgentId).catch(console.error);
+    } else {
+      executeRealAnthropicCall(trace.id, session.id, masterAgentId, ownerId, instruction).catch(console.error);
+    }
+  } else if (mode === 'parallel') {
+    // Parallel: Execute all agents simultaneously
+    const sessions = await Promise.all(
+      agents.map(agent =>
+        prisma.traceSession.create({
+          data: {
+            taskTraceId: trace.id,
+            agentId: agent.id,
+            instruction,
+            status: 'running',
+          },
+        })
+      )
+    );
+
+    // Emit parallel execution events
+    for (const [idx, session] of sessions.entries()) {
+      await prisma.sessionEvent.create({
+        data: {
+          sessionId: session.id,
+          type: 'agent:executing',
+          content: `Starting parallel execution: ${agents[idx].name}`,
+          fromAgentId: agents[idx].id,
+          tokenCount: 0,
+          cost: 0,
+          metadata: { mode: 'parallel', agentIndex: idx, totalAgents: agents.length },
+        },
+      });
+
+      if (process.env.USE_SIMULATION === 'true') {
+        simulateAgentWork(trace.id, session.id, agents[idx].id).catch(console.error);
+      } else {
+        executeRealAnthropicCall(trace.id, session.id, agents[idx].id, ownerId, instruction).catch(console.error);
+      }
+    }
+  } else if (mode === 'sequential') {
+    // Sequential: Execute agents one by one
+    executeSequentialAgents(trace.id, agents, instruction, ownerId).catch(console.error);
+  }
+
+  return { traceId: trace.id };
+}
+
+async function executeSequentialAgents(
+  traceId: string,
+  agents: any[],
+  instruction: string,
+  ownerId: string,
+) {
+  for (const [idx, agent] of agents.entries()) {
+    const session = await prisma.traceSession.create({
+      data: {
+        taskTraceId: traceId,
+        agentId: agent.id,
+        instruction,
+        status: 'running',
+      },
+    });
+
+    await prisma.sessionEvent.create({
+      data: {
+        sessionId: session.id,
+        type: 'agent:executing',
+        content: `Sequential execution (${idx + 1}/${agents.length}): ${agent.name}`,
+        fromAgentId: agent.id,
+        tokenCount: 0,
+        cost: 0,
+        metadata: { mode: 'sequential', agentIndex: idx, totalAgents: agents.length },
+      },
+    });
+
+    if (process.env.USE_SIMULATION === 'true') {
+      await simulateAgentWork(traceId, session.id, agent.id);
+    } else {
+      await executeRealAnthropicCall(traceId, session.id, agent.id, ownerId, instruction);
+    }
+
+    // Wait for this session to complete before next
+    await new Promise((resolve) => {
+      const checkInterval = setInterval(async () => {
+        const updatedSession = await prisma.traceSession.findUnique({
+          where: { id: session.id },
+        });
+        if (updatedSession?.status === 'completed' || updatedSession?.status === 'error') {
+          clearInterval(checkInterval);
+          resolve(null);
+        }
+      }, 1000);
+    });
+  }
+
+  // Mark trace as complete after all sequential executions
+  await prisma.taskTrace.update({
+    where: { id: traceId },
+    data: { status: 'completed', completedAt: new Date() },
+  });
+}
+
 export async function executeRealAnthropicCall(
   traceId: string,
   sessionId: string,
