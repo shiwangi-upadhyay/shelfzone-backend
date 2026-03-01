@@ -67,14 +67,65 @@
 2. **Analytics endpoint** - doesn't exist (404)
 3. **Command Center** - streaming, delegation, cost counter all broken
 
-## Next Steps:
-1. Complete 30-minute page assessment (15 mins left)
-2. Fix Command Center completely
-3. Fix Agent Detail endpoint bug
-4. Build missing Analytics endpoints (if required)
-5. Test all pages end-to-end
-6. Report to Boss
-7. Ask before merge
+## Page Assessment Complete (30 minutes)
+
+### ✅ WORKING (Verified - Data Loads Correctly):
+| Page | Route | Status |
+|------|-------|--------|
+| Dashboard Home | `/dashboard` | ✅ Working |
+| Agents Hierarchy | `/dashboard/agents` | ✅ Working - shows 8 agents in tree |
+| Agents List | `/dashboard/agents` (tab) | ✅ Working |
+| Billing Summary | `/dashboard/agents/costs` | ✅ Working - $1.19 total, real data |
+| Budgets | `/dashboard/agents/budgets` | ✅ Working |
+| Teams | `/dashboard/agents/teams` | ✅ Working - 1 team |
+| Commands (Audit) | `/dashboard/agents/commands` | ✅ Working |
+| Agent Trace | `/dashboard/agent-trace` | ✅ Working - 20 traces |
+| API Keys Settings | `/dashboard/settings/api-keys` | ✅ Working |
+| Billing (HR) | `/dashboard/billing` | ✅ Working |
+
+### ⚠️ BROKEN (Found Issues):
+| Page | Route | Issue |
+|------|-------|-------|
+| **Agent Detail** | `/dashboard/agents/:id` | ❌ **API returns null for all fields** - GET /api/agent-portal/agents/:id returns {data: {name: null, model: null, ...}} even though list endpoint works |
+| **Command Center** | `/dashboard/agents/command` | ❌ **Multiple issues**: streaming doesn't work, no delegation cards, no cost counter, right panel static. Backend has SSE endpoints but needs debugging |
+| **Analytics** | `/dashboard/agents/analytics` | ❌ **Backend endpoint missing** (404: `/api/agent-portal/analytics/efficiency`) - either build endpoint or remove page |
+
+### ❌ NOT BUILT:
+| Feature | Status |
+|---------|--------|
+| **Agent Requests Page** | Not built - backend API exists (`/api/agent-requests`) but frontend missing at `/dashboard/agents/requests` |
+| **Gateway Setup Page** | Not built - no UI for configuring gateway endpoint |
+
+### ✅ VERIFIED FEATURES:
+- **Dark Mode:** ✅ ThemeProvider configured in providers.tsx
+- **Loading States:** ✅ 22/30+ pages have loading skeletons
+- **API Key Management:** ✅ Working - endpoint `/api/user/api-key`
+- **Hierarchy Visualization:** ✅ Working with tree lines
+- **Billing Tracking:** ✅ Real data only, no negative costs
+- **Gateway Proxy:** ✅ Exists at `/api/gateway/v1/messages` with API key auth
+
+## Next Steps (Priority Order):
+1. **FIX COMMAND CENTER** (highest priority - currently broken)
+   - Debug SSE streaming in backend
+   - Verify `executeRealAnthropicCall` works with user's API key
+   - Fix frontend to display streaming messages
+   - Add delegation cards
+   - Add running cost counter
+   - Fix right panel task breakdown
+   
+2. **Fix Agent Detail API bug** - endpoint returns null for all fields
+3. **Build or remove Analytics** - page exists but backend 404s
+4. **Build Agent Requests page** - backend exists, just needs frontend
+5. **Test all pages end-to-end**
+6. **Ask before merge to develop**
+
+## Command Center Investigation Started:
+- Backend routes exist: `/api/agent-gateway/instruct`, `/api/agent-gateway/stream/:traceId`
+- Frontend hooks exist: `useInstruct`, `useTraceStream` with SSE support
+- Admin user has NO API key set (returns hasKey: null)
+- `executeRealAnthropicCall` function exists in gateway.service.ts
+- SSE streaming polls `getSessionEventsAfter` every interval
+- Need to test actual flow: instruct → create trace → execute → stream events
 
 ## Configuration:
 - Backend: http://157.10.98.227:3001
