@@ -9,12 +9,10 @@ export async function instructHandler(request: FastifyRequest, reply: FastifyRep
     return reply.status(400).send({ error: 'Validation Error', message: parsed.error.issues[0].message });
   }
 
-  // Check API key BEFORE creating trace (unless simulation mode)
-  if (process.env.USE_SIMULATION !== 'true') {
-    const apiKey = await getUserDecryptedKey(request.user!.userId);
-    if (!apiKey) {
-      return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
-    }
+  // Check API key BEFORE creating trace
+  const apiKey = await getUserDecryptedKey(request.user!.userId);
+  if (!apiKey) {
+    return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
   }
 
   try {
@@ -24,16 +22,10 @@ export async function instructHandler(request: FastifyRequest, reply: FastifyRep
       parsed.data.masterAgentId,
     );
 
-    // Use real Anthropic API unless USE_SIMULATION=true
-    if (process.env.USE_SIMULATION === 'true') {
-      gatewayService.simulateAgentWork(traceId, sessionId, agentId).catch((err) => {
-        console.error('Simulation failed:', err);
-      });
-    } else {
-      gatewayService.executeRealAnthropicCall(traceId, sessionId, agentId, request.user!.userId, parsed.data.instruction).catch((err) => {
-        console.error('Anthropic API call failed:', err);
-      });
-    }
+    // Execute real Anthropic API call
+    gatewayService.executeRealAnthropicCall(traceId, sessionId, agentId, request.user!.userId, parsed.data.instruction).catch((err) => {
+      console.error('Anthropic API call failed:', err);
+    });
 
     return reply.status(201).send({ data: { traceId, sessionId } });
   } catch (err: unknown) {
@@ -48,12 +40,10 @@ export async function executeMultiHandler(request: FastifyRequest, reply: Fastif
     return reply.status(400).send({ error: 'Validation Error', message: parsed.error.issues[0].message });
   }
 
-  // Check API key BEFORE creating trace (unless simulation mode)
-  if (process.env.USE_SIMULATION !== 'true') {
-    const apiKey = await getUserDecryptedKey(request.user!.userId);
-    if (!apiKey) {
-      return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
-    }
+  // Check API key BEFORE creating trace
+  const apiKey = await getUserDecryptedKey(request.user!.userId);
+  if (!apiKey) {
+    return reply.status(403).send({ error: 'API Key Required', message: 'Set your Anthropic API key in settings before using the Command Center' });
   }
 
   try {
