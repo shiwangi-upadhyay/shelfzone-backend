@@ -32,6 +32,7 @@ model User {
   processedPayrolls      PayrollRun[]       @relation("PayrollProcessor")
   taskTraces             TaskTrace[]        @relation("TraceOwner")
   userApiKey             UserApiKey?
+  userGatewayKey         UserGatewayKey?
 
   @@map("users")
 }
@@ -314,6 +315,20 @@ model UserApiKey {
   user         User      @relation(fields: [userId], references: [id])
 
   @@map("user_api_keys")
+}
+
+model UserGatewayKey {
+  id         String    @id @default(cuid())
+  userId     String    @unique @map("user_id")
+  keyHash    String    @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  isActive   Boolean   @default(true) @map("is_active")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("user_gateway_keys")
 }
 
 model AgentRegistry {
