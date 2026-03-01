@@ -27,12 +27,18 @@ export default async function gatewayProxyRoutes(app: FastifyInstance) {
     const apiKey = await resolveApiKey(userId);
     const body = request.body as any;
 
+    // If no agent header provided and user is admin, default to SHIWANGI (OpenClaw integration)
+    let agentName = (request.headers['x-shelfzone-agent'] as string) || undefined;
+    if (!agentName && userId === 'seed-admin-001') {
+      agentName = 'SHIWANGI'; // Default for OpenClaw gateway calls
+    }
+
     const meta = {
       userId,
-      agentName: (request.headers['x-shelfzone-agent'] as string) || undefined,
+      agentName,
       taskDescription: (request.headers['x-shelfzone-task'] as string) || undefined,
       parentSessionId: (request.headers['x-shelfzone-parent-session'] as string) || undefined,
-      sessionType: (request.headers['x-shelfzone-session-type'] as string) || 'gateway',
+      sessionType: (request.headers['x-shelfzone-session-type'] as string) || 'openclaw',
     };
 
     // Check if streaming requested
