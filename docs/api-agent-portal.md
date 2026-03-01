@@ -584,6 +584,9 @@ period="7d" | "14d" | "30d" (default: "7d")
 
 **Access:** `SUPER_ADMIN`, `HR_ADMIN`
 
+**Data Source:** `trace_sessions` table (same as `/api/billing/summary`)  
+**Note:** Analytics and billing endpoints are unified to return consistent cost data. See `docs/BILLING_UNIFICATION.md` for details.
+
 **Query Parameters:** Same as agent analytics (period)
 
 **Response (200 OK):**

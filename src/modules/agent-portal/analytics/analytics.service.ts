@@ -9,29 +9,39 @@ function periodToDate(period: string): Date {
 
 export async function getAgentAnalytics(agentId: string, period: string) {
   const since = periodToDate(period);
-  const stats = await prisma.agentDailyStats.aggregate({
-    where: { agentId, date: { gte: since } },
+  
+  // Query trace_sessions as the single source of truth
+  const stats = await prisma.traceSession.aggregate({
+    where: { agentId, startedAt: { gte: since } },
     _sum: {
-      totalSessions: true,
-      successCount: true,
-      errorCount: true,
-      totalInputTokens: true,
-      totalOutputTokens: true,
-      totalCost: true,
+      cost: true,
+      tokensIn: true,
+      tokensOut: true,
+      durationMs: true,
     },
-    _avg: { avgLatencyMs: true },
+    _count: true,
+    _avg: { durationMs: true },
   });
+
+  const [successCount, errorCount] = await Promise.all([
+    prisma.traceSession.count({
+      where: { agentId, startedAt: { gte: since }, status: 'success' },
+    }),
+    prisma.traceSession.count({
+      where: { agentId, startedAt: { gte: since }, status: { in: ['error', 'timeout'] } },
+    }),
+  ]);
 
   return {
     agentId,
     period,
-    totalSessions: stats._sum.totalSessions ?? 0,
-    successCount: stats._sum.successCount ?? 0,
-    errorCount: stats._sum.errorCount ?? 0,
-    totalInputTokens: stats._sum.totalInputTokens ?? 0,
-    totalOutputTokens: stats._sum.totalOutputTokens ?? 0,
-    totalCost: stats._sum.totalCost ?? 0,
-    avgLatencyMs: stats._avg.avgLatencyMs ?? 0,
+    totalSessions: stats._count ?? 0,
+    successCount,
+    errorCount,
+    totalInputTokens: stats._sum.tokensIn ?? 0,
+    totalOutputTokens: stats._sum.tokensOut ?? 0,
+    totalCost: Number(stats._sum.cost ?? 0),
+    avgLatencyMs: stats._avg.durationMs ?? 0,
   };
 }
 
@@ -56,52 +66,70 @@ export async function getTeamAnalytics(teamId: string, period: string) {
     };
   }
 
-  const stats = await prisma.agentDailyStats.aggregate({
-    where: { agentId: { in: agentIds }, date: { gte: since } },
+  // Query trace_sessions as the single source of truth
+  const stats = await prisma.traceSession.aggregate({
+    where: { agentId: { in: agentIds }, startedAt: { gte: since } },
     _sum: {
-      totalSessions: true,
-      successCount: true,
-      errorCount: true,
-      totalInputTokens: true,
-      totalOutputTokens: true,
-      totalCost: true,
+      cost: true,
+      tokensIn: true,
+      tokensOut: true,
     },
+    _count: true,
   });
+
+  const [successCount, errorCount] = await Promise.all([
+    prisma.traceSession.count({
+      where: { agentId: { in: agentIds }, startedAt: { gte: since }, status: 'success' },
+    }),
+    prisma.traceSession.count({
+      where: { agentId: { in: agentIds }, startedAt: { gte: since }, status: { in: ['error', 'timeout'] } },
+    }),
+  ]);
 
   return {
     teamId,
     period,
-    totalSessions: stats._sum.totalSessions ?? 0,
-    successCount: stats._sum.successCount ?? 0,
-    errorCount: stats._sum.errorCount ?? 0,
-    totalInputTokens: stats._sum.totalInputTokens ?? 0,
-    totalOutputTokens: stats._sum.totalOutputTokens ?? 0,
-    totalCost: stats._sum.totalCost ?? 0,
+    totalSessions: stats._count ?? 0,
+    successCount,
+    errorCount,
+    totalInputTokens: stats._sum.tokensIn ?? 0,
+    totalOutputTokens: stats._sum.tokensOut ?? 0,
+    totalCost: Number(stats._sum.cost ?? 0),
   };
 }
 
 export async function getPlatformAnalytics(period: string) {
   const since = periodToDate(period);
-  const stats = await prisma.agentDailyStats.aggregate({
-    where: { date: { gte: since } },
+  
+  // Query trace_sessions as the single source of truth for billing data
+  const stats = await prisma.traceSession.aggregate({
+    where: { startedAt: { gte: since } },
     _sum: {
-      totalSessions: true,
-      successCount: true,
-      errorCount: true,
-      totalInputTokens: true,
-      totalOutputTokens: true,
-      totalCost: true,
+      cost: true,
+      tokensIn: true,
+      tokensOut: true,
     },
+    _count: true,
   });
+
+  // Count success/error sessions based on status if available
+  const [successCount, errorCount] = await Promise.all([
+    prisma.traceSession.count({
+      where: { startedAt: { gte: since }, status: 'success' },
+    }),
+    prisma.traceSession.count({
+      where: { startedAt: { gte: since }, status: { in: ['error', 'timeout'] } },
+    }),
+  ]);
 
   return {
     period,
-    totalSessions: stats._sum.totalSessions ?? 0,
-    successCount: stats._sum.successCount ?? 0,
-    errorCount: stats._sum.errorCount ?? 0,
-    totalInputTokens: stats._sum.totalInputTokens ?? 0,
-    totalOutputTokens: stats._sum.totalOutputTokens ?? 0,
-    totalCost: stats._sum.totalCost ?? 0,
+    totalSessions: stats._count ?? 0,
+    successCount,
+    errorCount,
+    totalInputTokens: stats._sum.tokensIn ?? 0,
+    totalOutputTokens: stats._sum.tokensOut ?? 0,
+    totalCost: Number(stats._sum.cost ?? 0),
   };
 }
 
@@ -109,19 +137,33 @@ export async function getTokenTrends(agentId: string, days: number) {
   const since = new Date();
   since.setDate(since.getDate() - days);
 
-  const stats = await prisma.agentDailyStats.findMany({
-    where: { agentId, date: { gte: since } },
-    orderBy: { date: 'asc' },
-    select: {
-      date: true,
-      totalInputTokens: true,
-      totalOutputTokens: true,
-      totalSessions: true,
-      totalCost: true,
-    },
-  });
+  // Query trace_sessions grouped by date
+  const stats = await prisma.$queryRaw<Array<{
+    date: Date;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_sessions: number;
+    total_cost: number;
+  }>>`
+    SELECT
+      DATE(started_at) as date,
+      COALESCE(SUM(tokens_in), 0)::int as total_input_tokens,
+      COALESCE(SUM(tokens_out), 0)::int as total_output_tokens,
+      COUNT(*)::int as total_sessions,
+      COALESCE(SUM(cost), 0)::float as total_cost
+    FROM trace_sessions
+    WHERE agent_id = ${agentId} AND started_at >= ${since}
+    GROUP BY DATE(started_at)
+    ORDER BY date ASC
+  `;
 
-  return stats;
+  return stats.map(s => ({
+    date: s.date,
+    totalInputTokens: Number(s.total_input_tokens),
+    totalOutputTokens: Number(s.total_output_tokens),
+    totalSessions: Number(s.total_sessions),
+    totalCost: Number(s.total_cost),
+  }));
 }
 
 export async function getAgentEfficiency(agentId: string, period: string) {

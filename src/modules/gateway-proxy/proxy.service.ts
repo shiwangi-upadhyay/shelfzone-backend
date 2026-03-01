@@ -11,6 +11,20 @@ interface ProxyResult {
 }
 
 /**
+ * Resolve agent by name. STRICT: agent must exist, reject if not found.
+ */
+async function resolveAgent(agentName: string): Promise<{ id: string; model: string }> {
+  const agent = await prisma.agentRegistry.findUnique({ where: { name: agentName } });
+  if (!agent) {
+    throw Object.assign(
+      new Error(`Agent "${agentName}" not found. Register the agent first.`),
+      { statusCode: 400 }
+    );
+  }
+  return { id: agent.id, model: agent.model };
+}
+
+/**
  * Proxy a chat request to Anthropic, auto-log everything.
  */
 export async function proxyChatRequest(
@@ -24,26 +38,19 @@ export async function proxyChatRequest(
     sessionType?: string;
   },
 ): Promise<ProxyResult> {
+  // STRICT: require agent name
+  if (!meta.agentName) {
+    throw Object.assign(
+      new Error('X-ShelfZone-Agent header is required'),
+      { statusCode: 400 }
+    );
+  }
+
   const model = requestBody.model || 'claude-sonnet-4-20250514';
   const startedAt = new Date();
 
-  // Resolve or create agent
-  const agentName = meta.agentName || 'Unknown';
-  let agent = await prisma.agentRegistry.findUnique({ where: { name: agentName } });
-  if (!agent) {
-    const slug = agentName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    agent = await prisma.agentRegistry.create({
-      data: {
-        name: agentName,
-        slug: `${slug}-${Date.now()}`,
-        type: 'WORKFLOW',
-        status: 'ACTIVE',
-        model,
-        createdBy: meta.userId,
-        description: `Auto-registered via gateway proxy`,
-      },
-    });
-  }
+  // Resolve agent (throws if not found)
+  const agent = await resolveAgent(meta.agentName);
 
   // Create TaskTrace
   const taskTrace = await prisma.taskTrace.create({
@@ -102,9 +109,17 @@ export async function proxyChatRequest(
     response = { error: { type: 'proxy_error', message: err.message } };
   }
 
-  // Calculate cost
+  // Calculate cost with validation
   const pricing = await getModelPricing(model);
   const cost = calculateCost(pricing, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens, usage.cacheCreationTokens);
+
+  // Validate: cost and tokens must be >= 0
+  if (cost < 0) {
+    throw new Error(`Cost calculation error: negative cost ${cost} for tokens ${JSON.stringify(usage)}`);
+  }
+  if (usage.inputTokens < 0 || usage.outputTokens < 0) {
+    throw new Error(`Invalid token counts: ${JSON.stringify(usage)}`);
+  }
 
   const completedAt = new Date();
   const durationMs = completedAt.getTime() - startedAt.getTime();
@@ -157,26 +172,19 @@ export async function proxyStreamRequest(
     sessionType?: string;
   },
 ): Promise<{ stream: ReadableStream<Uint8Array>; traceSessionId: string; taskTraceId: string }> {
+  // STRICT: require agent name
+  if (!meta.agentName) {
+    throw Object.assign(
+      new Error('X-ShelfZone-Agent header is required'),
+      { statusCode: 400 }
+    );
+  }
+
   const model = requestBody.model || 'claude-sonnet-4-20250514';
   const startedAt = new Date();
 
-  // Resolve agent
-  const agentName = meta.agentName || 'Unknown';
-  let agent = await prisma.agentRegistry.findUnique({ where: { name: agentName } });
-  if (!agent) {
-    const slug = agentName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-    agent = await prisma.agentRegistry.create({
-      data: {
-        name: agentName,
-        slug: `${slug}-${Date.now()}`,
-        type: 'WORKFLOW',
-        status: 'ACTIVE',
-        model,
-        createdBy: meta.userId,
-        description: `Auto-registered via gateway proxy`,
-      },
-    });
-  }
+  // Resolve agent (throws if not found)
+  const agent = await resolveAgent(meta.agentName);
 
   // Create traces
   const taskTrace = await prisma.taskTrace.create({
@@ -229,7 +237,7 @@ export async function proxyStreamRequest(
     throw Object.assign(new Error(errorBody), { statusCode: anthropicRes.status });
   }
 
-  // Create a transform stream that passes through SSE data and captures usage from message_delta
+  // Create a transform stream that passes through SSE data and captures usage
   const reader = anthropicRes.body.getReader();
   let inputTokens = 0;
   let outputTokens = 0;
@@ -241,9 +249,16 @@ export async function proxyStreamRequest(
       const { done, value } = await reader.read();
       if (done) {
         controller.close();
-        // Stream done — log final usage
+        
+        // Stream done — log final usage with validation
         const pricing = await getModelPricing(model);
         const cost = calculateCost(pricing, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens);
+        
+        // Validate: cost and tokens must be >= 0
+        const finalCost = Math.max(0, cost); // clamp to 0 minimum
+        const finalInputTokens = Math.max(0, inputTokens);
+        const finalOutputTokens = Math.max(0, outputTokens);
+        
         const completedAt = new Date();
         const durationMs = completedAt.getTime() - startedAt.getTime();
 
@@ -251,9 +266,9 @@ export async function proxyStreamRequest(
           where: { id: traceSession.id },
           data: {
             status: 'success',
-            cost: new Prisma.Decimal(cost.toFixed(4)),
-            tokensIn: inputTokens,
-            tokensOut: outputTokens,
+            cost: new Prisma.Decimal(finalCost.toFixed(4)),
+            tokensIn: finalInputTokens,
+            tokensOut: finalOutputTokens,
             durationMs,
             completedAt,
           },
@@ -262,8 +277,8 @@ export async function proxyStreamRequest(
           where: { id: taskTrace.id },
           data: {
             status: 'completed',
-            totalCost: new Prisma.Decimal(cost.toFixed(4)),
-            totalTokens: inputTokens + outputTokens,
+            totalCost: new Prisma.Decimal(finalCost.toFixed(4)),
+            totalTokens: finalInputTokens + finalOutputTokens,
             agentsUsed: 1,
             completedAt,
           },
@@ -283,13 +298,16 @@ export async function proxyStreamRequest(
         if (jsonStr === '[DONE]') continue;
         try {
           const evt = JSON.parse(jsonStr);
+          // message_start has initial input token count
           if (evt.type === 'message_start' && evt.message?.usage) {
             inputTokens = evt.message.usage.input_tokens || 0;
             cacheReadTokens = evt.message.usage.cache_read_input_tokens || 0;
             cacheCreationTokens = evt.message.usage.cache_creation_input_tokens || 0;
           }
+          // message_delta has incremental output tokens
           if (evt.type === 'message_delta' && evt.usage) {
-            outputTokens = evt.usage.output_tokens || 0;
+            // ACCUMULATE output tokens, don't overwrite
+            outputTokens += evt.usage.output_tokens || 0;
           }
         } catch { /* not JSON, skip */ }
       }

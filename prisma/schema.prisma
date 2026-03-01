@@ -6,6 +6,652 @@ datasource db {
   provider = "postgresql"
 }
 
+model User {
+  id                     String             @id @default(cuid())
+  email                  String             @unique
+  passwordHash           String             @map("password_hash")
+  role                   Role               @default(EMPLOYEE)
+  isActive               Boolean            @default(true) @map("is_active")
+  refreshToken           String?            @map("refresh_token")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+  createdApiKeys         AgentApiKey[]      @relation("ApiKeyCreator")
+  agentConfigChanges     AgentConfigLog[]
+  createdAgents          AgentRegistry[]    @relation("AgentCreator")
+  updatedAgents          AgentRegistry[]    @relation("AgentUpdater")
+  agentRequests          AgentRequest[]     @relation("AgentRequester")
+  reviewedAgentRequests  AgentRequest[]     @relation("AgentRequestReviewer")
+  agentSessions          AgentSession[]
+  createdTeams           AgentTeam[]        @relation("TeamCreator")
+  regularizedAttendances AttendanceRecord[] @relation("AttendanceRegularizer")
+  commandLogs            CommandLog[]
+  managedDepartments     Department[]       @relation("DepartmentManager")
+  employee               Employee?
+  reviewedLeaveRequests  LeaveRequest[]     @relation("LeaveReviewer")
+  notifications          Notification[]
+  processedPayrolls      PayrollRun[]       @relation("PayrollProcessor")
+  taskTraces             TaskTrace[]        @relation("TraceOwner")
+  userApiKey             UserApiKey?
+  userGatewayKey         UserGatewayKey?
+
+  @@map("users")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  message   String
+  isRead    Boolean          @default(false) @map("is_read")
+  readAt    DateTime?        @map("read_at")
+  metadata  Json?
+  createdAt DateTime         @default(now()) @map("created_at")
+  user      User             @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model Department {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  managerId   String?    @map("manager_id")
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  manager     User?      @relation("DepartmentManager", fields: [managerId], references: [id])
+  employees   Employee[]
+
+  @@map("departments")
+}
+
+model Designation {
+  id          String     @id @default(cuid())
+  title       String     @unique
+  level       Int
+  description String?
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  employees   Employee[]
+
+  @@map("designations")
+}
+
+model Employee {
+  id                  String              @id @default(cuid())
+  employeeCode        String              @unique @map("employee_code")
+  userId              String              @unique @map("user_id")
+  departmentId        String              @map("department_id")
+  designationId       String              @map("designation_id")
+  firstName           String              @map("first_name")
+  lastName            String              @map("last_name")
+  phone               String?
+  encryptedAadhaar    String?             @map("encrypted_aadhaar")
+  encryptedPan        String?             @map("encrypted_pan")
+  encryptedSalary     String?             @map("encrypted_salary")
+  dateOfJoining       DateTime            @map("date_of_joining")
+  dateOfLeaving       DateTime?           @map("date_of_leaving")
+  status              EmployeeStatus      @default(ACTIVE)
+  managerId           String?             @map("manager_id")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  attendanceRecords   AttendanceRecord[]
+  attendanceSummaries AttendanceSummary[]
+  department          Department          @relation(fields: [departmentId], references: [id])
+  designation         Designation         @relation(fields: [designationId], references: [id])
+  manager             Employee?           @relation("EmployeeHierarchy", fields: [managerId], references: [id])
+  directReports       Employee[]          @relation("EmployeeHierarchy")
+  user                User                @relation(fields: [userId], references: [id])
+  leaveBalances       LeaveBalance[]
+  leaveRequests       LeaveRequest[]
+  payslips            Payslip[]
+  salaryStructure     SalaryStructure?
+
+  @@map("employees")
+}
+
+model AttendanceRecord {
+  id            String           @id @default(cuid())
+  employeeId    String           @map("employee_id")
+  date          DateTime         @db.Date
+  checkIn       DateTime         @map("check_in")
+  checkOut      DateTime?        @map("check_out")
+  checkInNote   String?          @map("check_in_note")
+  checkOutNote  String?          @map("check_out_note")
+  status        AttendanceStatus
+  hoursWorked   Float?           @map("hours_worked")
+  overtimeHours Float?           @map("overtime_hours")
+  isRegularized Boolean          @default(false) @map("is_regularized")
+  regularizedBy String?          @map("regularized_by")
+  regularizedAt DateTime?        @map("regularized_at")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  employee      Employee         @relation(fields: [employeeId], references: [id])
+  regularizer   User?            @relation("AttendanceRegularizer", fields: [regularizedBy], references: [id])
+
+  @@unique([employeeId, date])
+  @@index([date])
+  @@map("attendance_records")
+}
+
+model AttendanceSummary {
+  id                 String   @id @default(cuid())
+  employeeId         String   @map("employee_id")
+  month              Int
+  year               Int
+  totalPresent       Int      @default(0) @map("total_present")
+  totalAbsent        Int      @default(0) @map("total_absent")
+  totalHalfDays      Int      @default(0) @map("total_half_days")
+  totalLate          Int      @default(0) @map("total_late")
+  totalLeaves        Int      @default(0) @map("total_leaves")
+  totalHolidays      Int      @default(0) @map("total_holidays")
+  totalHoursWorked   Float    @default(0) @map("total_hours_worked")
+  totalOvertimeHours Float    @default(0) @map("total_overtime_hours")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+  employee           Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@index([employeeId, year, month])
+  @@map("attendance_summaries")
+}
+
+model LeavePolicy {
+  id                  String    @id @default(cuid())
+  leaveType           LeaveType @unique @map("leave_type")
+  name                String
+  description         String?
+  totalDaysPerYear    Int       @map("total_days_per_year")
+  maxConsecutiveDays  Int       @map("max_consecutive_days")
+  canCarryForward     Boolean   @default(false) @map("can_carry_forward")
+  maxCarryForwardDays Int       @default(0) @map("max_carry_forward_days")
+  isActive            Boolean   @default(true) @map("is_active")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@map("leave_policies")
+}
+
+model LeaveBalance {
+  id             String    @id @default(cuid())
+  employeeId     String    @map("employee_id")
+  leaveType      LeaveType @map("leave_type")
+  year           Int
+  totalEntitled  Float     @map("total_entitled")
+  used           Float     @default(0)
+  carriedForward Float     @default(0) @map("carried_forward")
+  remaining      Float
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  employee       Employee  @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, leaveType, year])
+  @@map("leave_balances")
+}
+
+model LeaveRequest {
+  id          String             @id @default(cuid())
+  employeeId  String             @map("employee_id")
+  leaveType   LeaveType          @map("leave_type")
+  startDate   DateTime           @map("start_date") @db.Date
+  endDate     DateTime           @map("end_date") @db.Date
+  totalDays   Float              @map("total_days")
+  isHalfDay   Boolean            @default(false) @map("is_half_day")
+  halfDayType String?            @map("half_day_type")
+  reason      String
+  status      LeaveRequestStatus @default(PENDING)
+  reviewedBy  String?            @map("reviewed_by")
+  reviewedAt  DateTime?          @map("reviewed_at")
+  reviewNote  String?            @map("review_note")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  employee    Employee           @relation(fields: [employeeId], references: [id])
+  reviewer    User?              @relation("LeaveReviewer", fields: [reviewedBy], references: [id])
+
+  @@map("leave_requests")
+}
+
+model SalaryStructure {
+  id                 String    @id @default(cuid())
+  employeeId         String    @unique @map("employee_id")
+  basicSalary        String    @map("basic_salary")
+  hra                String?
+  da                 String?
+  specialAllowance   String?   @map("special_allowance")
+  medicalAllowance   String?   @map("medical_allowance")
+  transportAllowance String?   @map("transport_allowance")
+  grossSalary        String    @map("gross_salary")
+  effectiveFrom      DateTime  @map("effective_from") @db.Date
+  effectiveTo        DateTime? @map("effective_to") @db.Date
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  employee           Employee  @relation(fields: [employeeId], references: [id])
+
+  @@map("salary_structures")
+}
+
+model PayrollRun {
+  id              String        @id @default(cuid())
+  month           Int
+  year            Int
+  status          PayrollStatus @default(DRAFT)
+  totalEmployees  Int           @default(0) @map("total_employees")
+  totalGrossPay   String?       @map("total_gross_pay")
+  totalDeductions String?       @map("total_deductions")
+  totalNetPay     String?       @map("total_net_pay")
+  processedBy     String?       @map("processed_by")
+  processedAt     DateTime?     @map("processed_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  processor       User?         @relation("PayrollProcessor", fields: [processedBy], references: [id])
+  payslips        Payslip[]
+
+  @@unique([month, year])
+  @@map("payroll_runs")
+}
+
+model Payslip {
+  id                 String     @id @default(cuid())
+  payrollRunId       String     @map("payroll_run_id")
+  employeeId         String     @map("employee_id")
+  month              Int
+  year               Int
+  basicPay           String     @map("basic_pay")
+  hra                String?
+  da                 String?
+  specialAllowance   String?    @map("special_allowance")
+  medicalAllowance   String?    @map("medical_allowance")
+  transportAllowance String?    @map("transport_allowance")
+  grossPay           String     @map("gross_pay")
+  pfEmployee         String?    @map("pf_employee")
+  pfEmployer         String?    @map("pf_employer")
+  esiEmployee        String?    @map("esi_employee")
+  esiEmployer        String?    @map("esi_employer")
+  professionalTax    String?    @map("professional_tax")
+  tds                String?
+  otherDeductions    String?    @map("other_deductions")
+  totalDeductions    String     @map("total_deductions")
+  netPay             String     @map("net_pay")
+  paidAt             DateTime?  @map("paid_at")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
+  employee           Employee   @relation(fields: [employeeId], references: [id])
+  payrollRun         PayrollRun @relation(fields: [payrollRunId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@index([employeeId, year, month])
+  @@map("payslips")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?  @map("user_id")
+  action     String
+  resource   String
+  resourceId String?  @map("resource_id")
+  details    Json?
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+}
+
+model UserApiKey {
+  id           String    @id @default(cuid())
+  userId       String    @unique @map("user_id")
+  provider     String    @default("anthropic")
+  encryptedKey String    @map("encrypted_key")
+  keyPrefix    String    @map("key_prefix")
+  isValid      Boolean   @default(true) @map("is_valid")
+  lastVerified DateTime? @map("last_verified")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  user         User      @relation(fields: [userId], references: [id])
+
+  @@map("user_api_keys")
+}
+
+model UserGatewayKey {
+  id         String    @id @default(cuid())
+  userId     String    @unique @map("user_id")
+  keyHash    String    @map("key_hash")
+  keyPrefix  String    @map("key_prefix")
+  isActive   Boolean   @default(true) @map("is_active")
+  lastUsedAt DateTime? @map("last_used_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("user_gateway_keys")
+}
+
+model AgentRegistry {
+  id                  String            @id @default(cuid())
+  name                String            @unique
+  slug                String            @unique
+  description         String?
+  type                AgentType
+  status              AgentStatus       @default(DRAFT)
+  model               String
+  systemPrompt        String?           @map("system_prompt")
+  systemPromptVersion Int               @default(1) @map("system_prompt_version")
+  temperature         Float             @default(0.7)
+  maxTokens           Int               @default(4096) @map("max_tokens")
+  timeoutMs           Int               @default(30000) @map("timeout_ms")
+  capabilities        Json?
+  tools               Json?
+  metadata            Json?
+  teamId              String?           @map("team_id")
+  isCritical          Boolean           @default(false) @map("is_critical")
+  createdBy           String            @map("created_by")
+  updatedBy           String?           @map("updated_by")
+  lastHealthCheck     DateTime?         @map("last_health_check")
+  lastHealthStatus    String?           @map("last_health_status")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  parentAgentId       String?           @map("parent_agent_id")
+  apiKeys             AgentApiKey[]
+  budgets             AgentBudget[]
+  configLogs          AgentConfigLog[]
+  costLedger          AgentCostLedger[]
+  dailyStats          AgentDailyStats[]
+  creator             User              @relation("AgentCreator", fields: [createdBy], references: [id])
+  parentAgent         AgentRegistry?    @relation("AgentHierarchy", fields: [parentAgentId], references: [id], map: "agent_registry_parent_fkey")
+  childAgents         AgentRegistry[]   @relation("AgentHierarchy")
+  team                AgentTeam?        @relation("TeamAgents", fields: [teamId], references: [id])
+  updater             User?             @relation("AgentUpdater", fields: [updatedBy], references: [id])
+  agentRequests       AgentRequest[]    @relation("AgentRequests")
+  sessions            AgentSession[]
+  leadOfTeams         AgentTeam[]       @relation("TeamLead")
+  eventsFrom          SessionEvent[]    @relation("EventFromAgent")
+  eventsTo            SessionEvent[]    @relation("EventToAgent")
+  masterTraces        TaskTrace[]       @relation("TraceMasterAgent")
+  traceSessions       TraceSession[]    @relation("TraceSessionAgent")
+  delegatedSessions   TraceSession[]    @relation("TraceSessionDelegator")
+
+  @@map("agent_registry")
+}
+
+model AgentTeam {
+  id          String          @id @default(cuid())
+  name        String          @unique
+  description String?
+  leadAgentId String?         @map("lead_agent_id")
+  createdBy   String          @map("created_by")
+  isActive    Boolean         @default(true) @map("is_active")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  budgets     AgentBudget[]
+  agents      AgentRegistry[] @relation("TeamAgents")
+  creator     User            @relation("TeamCreator", fields: [createdBy], references: [id])
+  leadAgent   AgentRegistry?  @relation("TeamLead", fields: [leadAgentId], references: [id])
+
+  @@map("agent_teams")
+}
+
+model AgentSession {
+  id            String            @id @default(cuid())
+  agentId       String            @map("agent_id")
+  userId        String?           @map("user_id")
+  sessionKey    String?           @map("session_key")
+  inputTokens   Int               @map("input_tokens")
+  outputTokens  Int               @map("output_tokens")
+  totalTokens   Int               @map("total_tokens")
+  latencyMs     Int               @map("latency_ms")
+  cost          Float
+  status        String
+  errorMessage  String?           @map("error_message")
+  inputPreview  String?           @map("input_preview")
+  outputPreview String?           @map("output_preview")
+  metadata      Json?
+  createdAt     DateTime          @default(now()) @map("created_at")
+  costLedger    AgentCostLedger[]
+  agent         AgentRegistry     @relation(fields: [agentId], references: [id])
+  user          User?             @relation(fields: [userId], references: [id])
+
+  @@index([agentId, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("agent_sessions")
+}
+
+model AgentCostLedger {
+  id             String        @id @default(cuid())
+  agentId        String        @map("agent_id")
+  sessionId      String        @map("session_id")
+  model          String
+  inputTokens    Int           @map("input_tokens")
+  outputTokens   Int           @map("output_tokens")
+  inputCostRate  Float         @map("input_cost_rate")
+  outputCostRate Float         @map("output_cost_rate")
+  inputCost      Float         @map("input_cost")
+  outputCost     Float         @map("output_cost")
+  totalCost      Float         @map("total_cost")
+  currency       String        @default("USD")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  agent          AgentRegistry @relation(fields: [agentId], references: [id])
+  session        AgentSession  @relation(fields: [sessionId], references: [id])
+
+  @@index([agentId, createdAt])
+  @@map("agent_cost_ledger")
+}
+
+model AgentDailyStats {
+  id                String        @id @default(cuid())
+  agentId           String        @map("agent_id")
+  date              DateTime      @db.Date
+  totalSessions     Int           @default(0) @map("total_sessions")
+  successCount      Int           @default(0) @map("success_count")
+  errorCount        Int           @default(0) @map("error_count")
+  timeoutCount      Int           @default(0) @map("timeout_count")
+  totalInputTokens  Int           @default(0) @map("total_input_tokens")
+  totalOutputTokens Int           @default(0) @map("total_output_tokens")
+  totalCost         Float         @default(0) @map("total_cost")
+  avgLatencyMs      Float         @default(0) @map("avg_latency_ms")
+  p95LatencyMs      Float         @default(0) @map("p95_latency_ms")
+  uniqueUsers       Int           @default(0) @map("unique_users")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  agent             AgentRegistry @relation(fields: [agentId], references: [id])
+
+  @@unique([agentId, date])
+  @@map("agent_daily_stats")
+}
+
+model AgentBudget {
+  id                String         @id @default(cuid())
+  agentId           String?        @map("agent_id")
+  teamId            String?        @map("team_id")
+  monthlyCapUsd     Float          @map("monthly_cap_usd")
+  alertThreshold60  Boolean        @default(true) @map("alert_threshold_60")
+  alertThreshold80  Boolean        @default(true) @map("alert_threshold_80")
+  alertThreshold100 Boolean        @default(true) @map("alert_threshold_100")
+  currentSpend      Float          @default(0) @map("current_spend")
+  month             Int
+  year              Int
+  autoPauseEnabled  Boolean        @default(true) @map("auto_pause_enabled")
+  isPaused          Boolean        @default(false) @map("is_paused")
+  pausedAt          DateTime?      @map("paused_at")
+  pausedBy          String?        @map("paused_by")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  agent             AgentRegistry? @relation(fields: [agentId], references: [id])
+  team              AgentTeam?     @relation(fields: [teamId], references: [id])
+
+  @@unique([agentId, teamId, month, year])
+  @@map("agent_budgets")
+}
+
+model AgentConfigLog {
+  id            String        @id @default(cuid())
+  agentId       String        @map("agent_id")
+  changedBy     String        @map("changed_by")
+  changeType    String        @map("change_type")
+  previousValue Json?         @map("previous_value")
+  newValue      Json?         @map("new_value")
+  reason        String?
+  createdAt     DateTime      @default(now()) @map("created_at")
+  agent         AgentRegistry @relation(fields: [agentId], references: [id])
+  changer       User          @relation(fields: [changedBy], references: [id])
+
+  @@index([agentId, createdAt])
+  @@map("agent_config_log")
+}
+
+model CommandLog {
+  id             String   @id @default(cuid())
+  userId         String   @map("user_id")
+  command        String
+  classification String
+  agentsInvoked  Json?    @map("agents_invoked")
+  outcome        String
+  totalCost      Float    @default(0) @map("total_cost")
+  totalLatencyMs Int      @default(0) @map("total_latency_ms")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+  user           User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@map("command_log")
+}
+
+model AgentApiKey {
+  id         String        @id @default(cuid())
+  agentId    String        @map("agent_id")
+  keyHash    String        @unique @map("key_hash")
+  keyPrefix  String        @map("key_prefix")
+  name       String
+  scopes     Json
+  isActive   Boolean       @default(true) @map("is_active")
+  lastUsedAt DateTime?     @map("last_used_at")
+  expiresAt  DateTime?     @map("expires_at")
+  createdBy  String        @map("created_by")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  revokedAt  DateTime?     @map("revoked_at")
+  agent      AgentRegistry @relation(fields: [agentId], references: [id])
+  creator    User          @relation("ApiKeyCreator", fields: [createdBy], references: [id])
+
+  @@index([agentId])
+  @@index([keyPrefix])
+  @@map("agent_api_keys")
+}
+
+model TaskTrace {
+  id            String         @id @default(cuid())
+  ownerId       String         @map("owner_id")
+  masterAgentId String?        @map("master_agent_id")
+  instruction   String
+  status        String         @default("running")
+  totalCost     Decimal        @default(0) @db.Decimal(10, 4)
+  totalTokens   Int            @default(0) @map("total_tokens")
+  agentsUsed    Int            @default(0) @map("agents_used")
+  startedAt     DateTime       @default(now()) @map("started_at")
+  completedAt   DateTime?      @map("completed_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  masterAgent   AgentRegistry? @relation("TraceMasterAgent", fields: [masterAgentId], references: [id])
+  owner         User           @relation("TraceOwner", fields: [ownerId], references: [id])
+  sessions      TraceSession[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("task_traces")
+}
+
+model TraceSession {
+  id              String         @id @default(cuid())
+  taskTraceId     String         @map("task_trace_id")
+  agentId         String         @map("agent_id")
+  parentSessionId String?        @map("parent_session_id")
+  delegatedBy     String?        @map("delegated_by")
+  instruction     String?
+  status          String         @default("running")
+  cost            Decimal        @default(0) @db.Decimal(10, 4)
+  tokensIn        Int            @default(0) @map("tokens_in")
+  tokensOut       Int            @default(0) @map("tokens_out")
+  startedAt       DateTime       @default(now()) @map("started_at")
+  completedAt     DateTime?      @map("completed_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  modelUsed       String?        @map("model_used") @db.VarChar
+  sessionType     String         @default("command-center") @map("session_type") @db.VarChar
+  durationMs      Int?           @map("duration_ms")
+  events          SessionEvent[]
+  agent           AgentRegistry  @relation("TraceSessionAgent", fields: [agentId], references: [id])
+  delegator       AgentRegistry? @relation("TraceSessionDelegator", fields: [delegatedBy], references: [id])
+  parentSession   TraceSession?  @relation("SessionHierarchy", fields: [parentSessionId], references: [id])
+  childSessions   TraceSession[] @relation("SessionHierarchy")
+  taskTrace       TaskTrace      @relation(fields: [taskTraceId], references: [id])
+
+  @@index([taskTraceId])
+  @@index([agentId])
+  @@index([parentSessionId])
+  @@map("trace_sessions")
+}
+
+model SessionEvent {
+  id          String         @id @default(cuid())
+  sessionId   String         @map("session_id")
+  type        String
+  fromAgentId String?        @map("from_agent_id")
+  toAgentId   String?        @map("to_agent_id")
+  content     String?
+  metadata    Json           @default("{}")
+  tokenCount  Int            @default(0) @map("token_count")
+  cost        Decimal        @default(0) @db.Decimal(10, 6)
+  durationMs  Int?           @map("duration_ms")
+  timestamp   DateTime       @default(now())
+  fromAgent   AgentRegistry? @relation("EventFromAgent", fields: [fromAgentId], references: [id])
+  session     TraceSession   @relation(fields: [sessionId], references: [id])
+  toAgent     AgentRegistry? @relation("EventToAgent", fields: [toAgentId], references: [id])
+
+  @@index([sessionId])
+  @@index([type])
+  @@index([timestamp])
+  @@map("session_events")
+}
+
+model AgentRequest {
+  id          String             @id @default(cuid())
+  requesterId String             @map("requester_id")
+  agentId     String             @map("agent_id")
+  purpose     String
+  priority    String             @default("normal")
+  reviewerId  String?            @map("reviewer_id")
+  reviewNote  String?            @map("review_note")
+  reviewedAt  DateTime?          @map("reviewed_at") @db.Timestamptz(6)
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  status      AgentRequestStatus @default(PENDING)
+  agent       AgentRegistry      @relation("AgentRequests", fields: [agentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  requester   User               @relation("AgentRequester", fields: [requesterId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  reviewer    User?              @relation("AgentRequestReviewer", fields: [reviewerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([agentId], map: "idx_agent_requests_agent")
+  @@index([requesterId], map: "idx_agent_requests_requester")
+  @@map("agent_requests")
+}
+
+model ModelPricing {
+  id                        String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  modelName                 String   @unique @map("model_name")
+  provider                  String   @default("anthropic")
+  inputPricePerMillion      Decimal  @map("input_price_per_million") @db.Decimal(10, 6)
+  outputPricePerMillion     Decimal  @map("output_price_per_million") @db.Decimal(10, 6)
+  cacheInputPricePerMillion Decimal? @default(0) @map("cache_input_price_per_million") @db.Decimal(10, 6)
+  effectiveFrom             DateTime @default(now()) @map("effective_from") @db.Timestamptz(6)
+  createdAt                 DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("model_pricing")
+}
+
 enum AgentStatus {
   ACTIVE
   INACTIVE
@@ -87,42 +733,6 @@ enum EmployeeStatus {
   TERMINATED
 }
 
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String   @map("password_hash")
-  role         Role     @default(EMPLOYEE)
-  isActive     Boolean  @default(true) @map("is_active")
-  refreshToken String?  @map("refresh_token")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  employee                Employee?
-  managedDepartments      Department[]       @relation("DepartmentManager")
-  regularizedAttendances  AttendanceRecord[] @relation("AttendanceRegularizer")
-  reviewedLeaveRequests   LeaveRequest[]     @relation("LeaveReviewer")
-  processedPayrolls       PayrollRun[]       @relation("PayrollProcessor")
-
-  notifications           Notification[]
-
-  userApiKey              UserApiKey?
-
-  // Agent management relations
-  createdAgents           AgentRegistry[]    @relation("AgentCreator")
-  updatedAgents           AgentRegistry[]    @relation("AgentUpdater")
-  createdTeams            AgentTeam[]        @relation("TeamCreator")
-  agentSessions           AgentSession[]
-  agentConfigChanges      AgentConfigLog[]
-  commandLogs             CommandLog[]
-  createdApiKeys          AgentApiKey[]  @relation("ApiKeyCreator")
-  taskTraces              TaskTrace[]    @relation("TraceOwner")
-  agentRequests           AgentRequest[] @relation("AgentRequester")
-  reviewedAgentRequests   AgentRequest[] @relation("AgentRequestReviewer")
-
-  @@map("users")
-}
-
 enum NotificationType {
   LEAVE_APPLIED
   LEAVE_APPROVED
@@ -134,663 +744,9 @@ enum NotificationType {
   SYSTEM_ANNOUNCEMENT
 }
 
-model Notification {
-  id        String           @id @default(cuid())
-  userId    String           @map("user_id")
-  type      NotificationType
-  title     String
-  message   String
-  isRead    Boolean          @default(false) @map("is_read")
-  readAt    DateTime?        @map("read_at")
-  metadata  Json?
-  createdAt DateTime         @default(now()) @map("created_at")
-
-  // Relations
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId, isRead])
-  @@index([userId, createdAt])
-  @@map("notifications")
-}
-
-model Department {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  description String?
-  managerId   String?  @map("manager_id")
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  manager   User?      @relation("DepartmentManager", fields: [managerId], references: [id])
-  employees Employee[]
-
-  @@map("departments")
-}
-
-model Designation {
-  id          String   @id @default(cuid())
-  title       String   @unique
-  level       Int
-  description String?
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  employees Employee[]
-
-  @@map("designations")
-}
-
-model Employee {
-  id               String         @id @default(cuid())
-  employeeCode     String         @unique @map("employee_code")
-  userId           String         @unique @map("user_id")
-  departmentId     String         @map("department_id")
-  designationId    String         @map("designation_id")
-  firstName        String         @map("first_name")
-  lastName         String         @map("last_name")
-  phone            String?
-  encryptedAadhaar String?        @map("encrypted_aadhaar")
-  encryptedPan     String?        @map("encrypted_pan")
-  encryptedSalary  String?        @map("encrypted_salary")
-  dateOfJoining    DateTime       @map("date_of_joining")
-  dateOfLeaving    DateTime?      @map("date_of_leaving")
-  status           EmployeeStatus @default(ACTIVE)
-  managerId        String?        @map("manager_id")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
-
-  // Relations
-  user          User        @relation(fields: [userId], references: [id])
-  department    Department  @relation(fields: [departmentId], references: [id])
-  designation   Designation @relation(fields: [designationId], references: [id])
-  manager              Employee?            @relation("EmployeeHierarchy", fields: [managerId], references: [id])
-  directReports        Employee[]           @relation("EmployeeHierarchy")
-  attendanceRecords    AttendanceRecord[]
-  attendanceSummaries  AttendanceSummary[]
-  leaveBalances        LeaveBalance[]
-  leaveRequests        LeaveRequest[]
-  salaryStructure      SalaryStructure?
-  payslips             Payslip[]
-
-  @@map("employees")
-}
-
-model AttendanceRecord {
-  id              String           @id @default(cuid())
-  employeeId      String           @map("employee_id")
-  date            DateTime         @db.Date
-  checkIn         DateTime         @map("check_in")
-  checkOut        DateTime?        @map("check_out")
-  checkInNote     String?          @map("check_in_note")
-  checkOutNote    String?          @map("check_out_note")
-  status          AttendanceStatus
-  hoursWorked     Float?           @map("hours_worked")
-  overtimeHours   Float?           @map("overtime_hours")
-  isRegularized   Boolean          @default(false) @map("is_regularized")
-  regularizedBy   String?          @map("regularized_by")
-  regularizedAt   DateTime?        @map("regularized_at")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-
-  // Relations
-  employee    Employee @relation(fields: [employeeId], references: [id])
-  regularizer User?    @relation("AttendanceRegularizer", fields: [regularizedBy], references: [id])
-
-  @@unique([employeeId, date])
-  @@index([date])
-  @@map("attendance_records")
-}
-
-model AttendanceSummary {
-  id                 String   @id @default(cuid())
-  employeeId         String   @map("employee_id")
-  month              Int
-  year               Int
-  totalPresent       Int      @default(0) @map("total_present")
-  totalAbsent        Int      @default(0) @map("total_absent")
-  totalHalfDays      Int      @default(0) @map("total_half_days")
-  totalLate          Int      @default(0) @map("total_late")
-  totalLeaves        Int      @default(0) @map("total_leaves")
-  totalHolidays      Int      @default(0) @map("total_holidays")
-  totalHoursWorked   Float    @default(0) @map("total_hours_worked")
-  totalOvertimeHours Float    @default(0) @map("total_overtime_hours")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  employee Employee @relation(fields: [employeeId], references: [id])
-
-  @@unique([employeeId, month, year])
-  @@index([employeeId, year, month])
-  @@map("attendance_summaries")
-}
-
-model LeavePolicy {
-  id                 String    @id @default(cuid())
-  leaveType          LeaveType @unique @map("leave_type")
-  name               String
-  description        String?
-  totalDaysPerYear   Int       @map("total_days_per_year")
-  maxConsecutiveDays Int       @map("max_consecutive_days")
-  canCarryForward    Boolean   @default(false) @map("can_carry_forward")
-  maxCarryForwardDays Int      @default(0) @map("max_carry_forward_days")
-  isActive           Boolean   @default(true) @map("is_active")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-
-  @@map("leave_policies")
-}
-
-model LeaveBalance {
-  id              String    @id @default(cuid())
-  employeeId      String    @map("employee_id")
-  leaveType       LeaveType @map("leave_type")
-  year            Int
-  totalEntitled   Float     @map("total_entitled")
-  used            Float     @default(0)
-  carriedForward  Float     @default(0) @map("carried_forward")
-  remaining       Float
-
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  employee Employee @relation(fields: [employeeId], references: [id])
-
-  @@unique([employeeId, leaveType, year])
-  @@map("leave_balances")
-}
-
-model LeaveRequest {
-  id           String             @id @default(cuid())
-  employeeId   String             @map("employee_id")
-  leaveType    LeaveType          @map("leave_type")
-  startDate    DateTime           @map("start_date") @db.Date
-  endDate      DateTime           @map("end_date") @db.Date
-  totalDays    Float              @map("total_days")
-  isHalfDay    Boolean            @default(false) @map("is_half_day")
-  halfDayType  String?            @map("half_day_type")
-  reason       String
-  status       LeaveRequestStatus @default(PENDING)
-  reviewedBy   String?            @map("reviewed_by")
-  reviewedAt   DateTime?          @map("reviewed_at")
-  reviewNote   String?            @map("review_note")
-  createdAt    DateTime           @default(now()) @map("created_at")
-  updatedAt    DateTime           @updatedAt @map("updated_at")
-
-  // Relations
-  employee Employee @relation(fields: [employeeId], references: [id])
-  reviewer User?    @relation("LeaveReviewer", fields: [reviewedBy], references: [id])
-
-  @@map("leave_requests")
-}
-
-model SalaryStructure {
-  id                 String    @id @default(cuid())
-  employeeId         String    @unique @map("employee_id")
-  basicSalary        String    @map("basic_salary")
-  hra                String?
-  da                 String?
-  specialAllowance   String?   @map("special_allowance")
-  medicalAllowance   String?   @map("medical_allowance")
-  transportAllowance String?   @map("transport_allowance")
-  grossSalary        String    @map("gross_salary")
-  effectiveFrom      DateTime  @map("effective_from") @db.Date
-  effectiveTo        DateTime? @map("effective_to") @db.Date
-  isActive           Boolean   @default(true) @map("is_active")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  employee Employee @relation(fields: [employeeId], references: [id])
-
-  @@map("salary_structures")
-}
-
-model PayrollRun {
-  id              String        @id @default(cuid())
-  month           Int
-  year            Int
-  status          PayrollStatus @default(DRAFT)
-  totalEmployees  Int           @default(0) @map("total_employees")
-  totalGrossPay   String?       @map("total_gross_pay")
-  totalDeductions String?       @map("total_deductions")
-  totalNetPay     String?       @map("total_net_pay")
-  processedBy     String?       @map("processed_by")
-  processedAt     DateTime?     @map("processed_at")
-  createdAt       DateTime      @default(now()) @map("created_at")
-  updatedAt       DateTime      @updatedAt @map("updated_at")
-
-  // Relations
-  processor User?     @relation("PayrollProcessor", fields: [processedBy], references: [id])
-  payslips  Payslip[]
-
-  @@unique([month, year])
-  @@map("payroll_runs")
-}
-
-model Payslip {
-  id                 String    @id @default(cuid())
-  payrollRunId       String    @map("payroll_run_id")
-  employeeId         String    @map("employee_id")
-  month              Int
-  year               Int
-  basicPay           String    @map("basic_pay")
-  hra                String?
-  da                 String?
-  specialAllowance   String?   @map("special_allowance")
-  medicalAllowance   String?   @map("medical_allowance")
-  transportAllowance String?   @map("transport_allowance")
-  grossPay           String    @map("gross_pay")
-  pfEmployee         String?   @map("pf_employee")
-  pfEmployer         String?   @map("pf_employer")
-  esiEmployee        String?   @map("esi_employee")
-  esiEmployer        String?   @map("esi_employer")
-  professionalTax    String?   @map("professional_tax")
-  tds                String?
-  otherDeductions    String?   @map("other_deductions")
-  totalDeductions    String    @map("total_deductions")
-  netPay             String    @map("net_pay")
-  paidAt             DateTime? @map("paid_at")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id])
-  employee   Employee   @relation(fields: [employeeId], references: [id])
-
-  @@unique([payrollRunId, employeeId])
-  @@index([employeeId, year, month])
-  @@map("payslips")
-}
-
-model AuditLog {
-  id         String   @id @default(cuid())
-  userId     String?  @map("user_id")
-  action     String
-  resource   String
-  resourceId String?  @map("resource_id")
-  details    Json?
-  ipAddress  String?  @map("ip_address")
-  userAgent  String?  @map("user_agent")
-  createdAt  DateTime @default(now()) @map("created_at")
-
-  @@map("audit_logs")
-}
-
-// ─── User API Keys (per-employee Anthropic/OpenAI keys) ──────────────
-
-model UserApiKey {
-  id           String    @id @default(cuid())
-  userId       String    @unique @map("user_id")
-  provider     String    @default("anthropic")
-  encryptedKey String    @map("encrypted_key")
-  keyPrefix    String    @map("key_prefix")
-  isValid      Boolean   @default(true) @map("is_valid")
-  lastVerified DateTime? @map("last_verified")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  user         User      @relation(fields: [userId], references: [id])
-
-  @@map("user_api_keys")
-}
-
-// ─── Agent Management ────────────────────────────────────────────────
-
-model AgentRegistry {
-  id                  String      @id @default(cuid())
-  name                String      @unique
-  slug                String      @unique
-  description         String?
-  type                AgentType
-  status              AgentStatus @default(DRAFT)
-  model               String
-  systemPrompt        String?     @map("system_prompt")
-  systemPromptVersion Int         @default(1) @map("system_prompt_version")
-  temperature         Float       @default(0.7)
-  maxTokens           Int         @default(4096) @map("max_tokens")
-  timeoutMs           Int         @default(30000) @map("timeout_ms")
-  capabilities        Json?
-  tools               Json?
-  metadata            Json?
-  teamId              String?     @map("team_id")
-  isCritical          Boolean     @default(false) @map("is_critical")
-  createdBy           String      @map("created_by")
-  updatedBy           String?     @map("updated_by")
-  lastHealthCheck     DateTime?   @map("last_health_check")
-  lastHealthStatus    String?     @map("last_health_status")
-  createdAt           DateTime    @default(now()) @map("created_at")
-  updatedAt           DateTime    @updatedAt @map("updated_at")
-
-  // Relations
-  team           AgentTeam?       @relation("TeamAgents", fields: [teamId], references: [id])
-  creator        User             @relation("AgentCreator", fields: [createdBy], references: [id])
-  updater        User?            @relation("AgentUpdater", fields: [updatedBy], references: [id])
-  sessions       AgentSession[]
-  costLedger     AgentCostLedger[]
-  dailyStats     AgentDailyStats[]
-  budgets        AgentBudget[]
-  configLogs     AgentConfigLog[]
-  leadOfTeams    AgentTeam[]      @relation("TeamLead")
-  apiKeys        AgentApiKey[]
-  masterTraces       TaskTrace[]      @relation("TraceMasterAgent")
-  traceSessions      TraceSession[]   @relation("TraceSessionAgent")
-  delegatedSessions  TraceSession[]   @relation("TraceSessionDelegator")
-  eventsFrom         SessionEvent[]   @relation("EventFromAgent")
-  eventsTo           SessionEvent[]   @relation("EventToAgent")
-  agentRequests      AgentRequest[]   @relation("AgentRequests")
-
-  @@map("agent_registry")
-}
-
-model AgentTeam {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  description String?
-  leadAgentId String?  @map("lead_agent_id")
-  createdBy   String   @map("created_by")
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  agents    AgentRegistry[] @relation("TeamAgents")
-  leadAgent AgentRegistry?  @relation("TeamLead", fields: [leadAgentId], references: [id])
-  creator   User            @relation("TeamCreator", fields: [createdBy], references: [id])
-  budgets   AgentBudget[]
-
-  @@map("agent_teams")
-}
-
-model AgentSession {
-  id            String   @id @default(cuid())
-  agentId       String   @map("agent_id")
-  userId        String?  @map("user_id")
-  sessionKey    String?  @map("session_key")
-  inputTokens   Int      @map("input_tokens")
-  outputTokens  Int      @map("output_tokens")
-  totalTokens   Int      @map("total_tokens")
-  latencyMs     Int      @map("latency_ms")
-  cost          Float
-  status        String
-  errorMessage  String?  @map("error_message")
-  inputPreview  String?  @map("input_preview")
-  outputPreview String?  @map("output_preview")
-  metadata      Json?
-  createdAt     DateTime @default(now()) @map("created_at")
-
-  // Relations
-  agent      AgentRegistry     @relation(fields: [agentId], references: [id])
-  user       User?             @relation(fields: [userId], references: [id])
-  costLedger AgentCostLedger[]
-
-  @@index([agentId, createdAt])
-  @@index([userId, createdAt])
-  @@index([createdAt])
-  @@map("agent_sessions")
-}
-
-model AgentCostLedger {
-  id             String   @id @default(cuid())
-  agentId        String   @map("agent_id")
-  sessionId      String   @map("session_id")
-  model          String
-  inputTokens    Int      @map("input_tokens")
-  outputTokens   Int      @map("output_tokens")
-  inputCostRate  Float    @map("input_cost_rate")
-  outputCostRate Float    @map("output_cost_rate")
-  inputCost      Float    @map("input_cost")
-  outputCost     Float    @map("output_cost")
-  totalCost      Float    @map("total_cost")
-  currency       String   @default("USD")
-  createdAt      DateTime @default(now()) @map("created_at")
-
-  // Relations
-  agent   AgentRegistry @relation(fields: [agentId], references: [id])
-  session AgentSession  @relation(fields: [sessionId], references: [id])
-
-  @@index([agentId, createdAt])
-  @@map("agent_cost_ledger")
-}
-
-model AgentDailyStats {
-  id                String   @id @default(cuid())
-  agentId           String   @map("agent_id")
-  date              DateTime @db.Date
-  totalSessions     Int      @default(0) @map("total_sessions")
-  successCount      Int      @default(0) @map("success_count")
-  errorCount        Int      @default(0) @map("error_count")
-  timeoutCount      Int      @default(0) @map("timeout_count")
-  totalInputTokens  Int      @default(0) @map("total_input_tokens")
-  totalOutputTokens Int      @default(0) @map("total_output_tokens")
-  totalCost         Float    @default(0) @map("total_cost")
-  avgLatencyMs      Float    @default(0) @map("avg_latency_ms")
-  p95LatencyMs      Float    @default(0) @map("p95_latency_ms")
-  uniqueUsers       Int      @default(0) @map("unique_users")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  agent AgentRegistry @relation(fields: [agentId], references: [id])
-
-  @@unique([agentId, date])
-  @@map("agent_daily_stats")
-}
-
-model AgentBudget {
-  id               String    @id @default(cuid())
-  agentId          String?   @map("agent_id")
-  teamId           String?   @map("team_id")
-  monthlyCapUsd    Float     @map("monthly_cap_usd")
-  alertThreshold60 Boolean   @default(true) @map("alert_threshold_60")
-  alertThreshold80 Boolean   @default(true) @map("alert_threshold_80")
-  alertThreshold100 Boolean  @default(true) @map("alert_threshold_100")
-  currentSpend     Float     @default(0) @map("current_spend")
-  month            Int
-  year             Int
-  autoPauseEnabled Boolean   @default(true) @map("auto_pause_enabled")
-  isPaused         Boolean   @default(false) @map("is_paused")
-  pausedAt         DateTime? @map("paused_at")
-  pausedBy         String?   @map("paused_by")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  agent AgentRegistry? @relation(fields: [agentId], references: [id])
-  team  AgentTeam?     @relation(fields: [teamId], references: [id])
-
-  @@unique([agentId, teamId, month, year])
-  @@map("agent_budgets")
-}
-
-model AgentConfigLog {
-  id            String   @id @default(cuid())
-  agentId       String   @map("agent_id")
-  changedBy     String   @map("changed_by")
-  changeType    String   @map("change_type")
-  previousValue Json?    @map("previous_value")
-  newValue      Json?    @map("new_value")
-  reason        String?
-  createdAt     DateTime @default(now()) @map("created_at")
-
-  // Relations
-  agent   AgentRegistry @relation(fields: [agentId], references: [id])
-  changer User          @relation(fields: [changedBy], references: [id])
-
-  @@index([agentId, createdAt])
-  @@map("agent_config_log")
-}
-
-model CommandLog {
-  id             String   @id @default(cuid())
-  userId         String   @map("user_id")
-  command        String
-  classification String
-  agentsInvoked  Json?    @map("agents_invoked")
-  outcome        String
-  totalCost      Float    @default(0) @map("total_cost")
-  totalLatencyMs Int      @default(0) @map("total_latency_ms")
-  metadata       Json?
-  createdAt      DateTime @default(now()) @map("created_at")
-
-  // Relations
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId, createdAt])
-  @@map("command_log")
-}
-
-model AgentApiKey {
-  id         String    @id @default(cuid())
-  agentId    String    @map("agent_id")
-  keyHash    String    @unique @map("key_hash")
-  keyPrefix  String    @map("key_prefix")
-  name       String
-  scopes     Json
-  isActive   Boolean   @default(true) @map("is_active")
-  lastUsedAt DateTime? @map("last_used_at")
-  expiresAt  DateTime? @map("expires_at")
-  createdBy  String    @map("created_by")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  revokedAt  DateTime? @map("revoked_at")
-
-  // Relations
-  agent   AgentRegistry @relation(fields: [agentId], references: [id])
-  creator User          @relation("ApiKeyCreator", fields: [createdBy], references: [id])
-
-  @@index([agentId])
-  @@index([keyPrefix])
-  @@map("agent_api_keys")
-}
-
-// ─── Agent Trace (Observability) ─────────────────────────────────
-
-model TaskTrace {
-  id            String    @id @default(cuid())
-  ownerId       String    @map("owner_id")
-  masterAgentId String?   @map("master_agent_id")
-  instruction   String
-  status        String    @default("running")
-  totalCost     Decimal   @default(0) @db.Decimal(10, 4)
-  totalTokens   Int       @default(0) @map("total_tokens")
-  agentsUsed    Int       @default(0) @map("agents_used")
-  startedAt     DateTime  @default(now()) @map("started_at")
-  completedAt   DateTime? @map("completed_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  owner       User           @relation("TraceOwner", fields: [ownerId], references: [id])
-  masterAgent AgentRegistry? @relation("TraceMasterAgent", fields: [masterAgentId], references: [id])
-  sessions    TraceSession[]
-
-  @@index([ownerId])
-  @@index([status])
-  @@index([startedAt])
-  @@map("task_traces")
-}
-
-model TraceSession {
-  id              String    @id @default(cuid())
-  taskTraceId     String    @map("task_trace_id")
-  agentId         String    @map("agent_id")
-  parentSessionId String?   @map("parent_session_id")
-  delegatedBy     String?   @map("delegated_by")
-  instruction     String?
-  status          String    @default("running")
-  modelUsed       String?   @map("model_used")
-  sessionType     String    @default("command-center") @map("session_type")
-  cost            Decimal   @default(0) @db.Decimal(10, 4)
-  tokensIn        Int       @default(0) @map("tokens_in")
-  tokensOut       Int       @default(0) @map("tokens_out")
-  durationMs      Int?      @map("duration_ms")
-  startedAt       DateTime  @default(now()) @map("started_at")
-  completedAt     DateTime? @map("completed_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-
-  // Relations
-  taskTrace      TaskTrace      @relation(fields: [taskTraceId], references: [id])
-  agent          AgentRegistry  @relation("TraceSessionAgent", fields: [agentId], references: [id])
-  parentSession  TraceSession?  @relation("SessionHierarchy", fields: [parentSessionId], references: [id])
-  childSessions  TraceSession[] @relation("SessionHierarchy")
-  delegator      AgentRegistry? @relation("TraceSessionDelegator", fields: [delegatedBy], references: [id])
-  events         SessionEvent[]
-
-  @@index([taskTraceId])
-  @@index([agentId])
-  @@index([parentSessionId])
-  @@map("trace_sessions")
-}
-
-model SessionEvent {
-  id          String   @id @default(cuid())
-  sessionId   String   @map("session_id")
-  type        String
-  content     String?
-  timestamp   DateTime @default(now())
-  fromAgentId String?  @map("from_agent_id")
-  toAgentId   String?  @map("to_agent_id")
-  tokenCount  Int      @default(0) @map("token_count")
-  cost        Decimal  @default(0) @db.Decimal(10, 6)
-  durationMs  Int?     @map("duration_ms")
-  metadata    Json     @default("{}")
-
-  // Relations
-  session   TraceSession   @relation(fields: [sessionId], references: [id])
-  fromAgent AgentRegistry? @relation("EventFromAgent", fields: [fromAgentId], references: [id])
-  toAgent   AgentRegistry? @relation("EventToAgent", fields: [toAgentId], references: [id])
-
-  @@index([sessionId])
-  @@index([type])
-  @@index([timestamp])
-  @@map("session_events")
-}
-
 enum AgentRequestStatus {
   PENDING
   APPROVED
   REJECTED
   CANCELLED
-}
-
-model AgentRequest {
-  id            String              @id @default(cuid())
-  requesterId   String              @map("requester_id")
-  agentId       String              @map("agent_id")
-  purpose       String
-  priority      String              @default("normal")  // low, normal, high, urgent
-  status        AgentRequestStatus  @default(PENDING)
-  reviewerId    String?             @map("reviewer_id")
-  reviewNote    String?             @map("review_note")
-  reviewedAt    DateTime?           @map("reviewed_at")
-  createdAt     DateTime            @default(now()) @map("created_at")
-  updatedAt     DateTime            @updatedAt @map("updated_at")
-
-  // Relations
-  requester     User                @relation("AgentRequester", fields: [requesterId], references: [id])
-  agent         AgentRegistry       @relation("AgentRequests", fields: [agentId], references: [id])
-  reviewer      User?               @relation("AgentRequestReviewer", fields: [reviewerId], references: [id])
-
-  @@index([requesterId])
-  @@index([agentId])
-  @@index([status])
-  @@map("agent_requests")
-}
-
-model ModelPricing {
-  id                        String   @id @default(cuid())
-  modelName                 String   @unique @map("model_name")
-  provider                  String   @default("anthropic")
-  inputPricePerMillion      Decimal  @map("input_price_per_million") @db.Decimal(10, 6)
-  outputPricePerMillion     Decimal  @map("output_price_per_million") @db.Decimal(10, 6)
-  cacheInputPricePerMillion Decimal  @default(0) @map("cache_input_price_per_million") @db.Decimal(10, 6)
-  effectiveFrom             DateTime @default(now()) @map("effective_from")
-  createdAt                 DateTime @default(now()) @map("created_at")
-
-  @@map("model_pricing")
 }
