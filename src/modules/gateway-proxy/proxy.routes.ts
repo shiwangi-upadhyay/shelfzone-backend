@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { authenticate } from '../../middleware/index.js';
+import { gatewayAuth } from '../../middleware/gateway-auth.js';
 import { proxyChatRequest, proxyStreamRequest } from './proxy.service.js';
 import prisma from '../../lib/prisma.js';
 import { decrypt } from '../../lib/encryption.js';
@@ -22,7 +22,7 @@ export default async function gatewayProxyRoutes(app: FastifyInstance) {
    *   X-ShelfZone-Parent-Session: parent trace session ID (optional, for delegation chains)
    *   X-ShelfZone-Session-Type: openclaw|command-center|external|gateway (optional)
    */
-  app.post('/api/gateway/v1/messages', { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post('/api/gateway/v1/messages', { preHandler: [gatewayAuth] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const userId = (request as any).user.userId;
     const apiKey = await resolveApiKey(userId);
     const body = request.body as any;
@@ -78,7 +78,7 @@ export default async function gatewayProxyRoutes(app: FastifyInstance) {
    * GET /api/gateway/v1/models
    * List available models with pricing
    */
-  app.get('/api/gateway/v1/models', { preHandler: [authenticate] }, async (_request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/gateway/v1/models', { preHandler: [gatewayAuth] }, async (_request: FastifyRequest, reply: FastifyReply) => {
     const models = await prisma.modelPricing.findMany({ orderBy: { modelName: 'asc' } });
     return reply.send({
       data: models.map(m => ({
@@ -97,7 +97,7 @@ export default async function gatewayProxyRoutes(app: FastifyInstance) {
    * GET /api/gateway/v1/usage
    * Real-time usage stats for current user
    */
-  app.get('/api/gateway/v1/usage', { preHandler: [authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
+  app.get('/api/gateway/v1/usage', { preHandler: [gatewayAuth] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const userId = (request as any).user.userId;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
