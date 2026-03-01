@@ -23,11 +23,13 @@ export async function handleSendMessage(
   try {
     const result = await streamMessage(userId, agentId, conversationId, message);
 
-    // Set SSE headers
+    // Set SSE headers with CORS
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': request.headers.origin || '*',
+      'Access-Control-Allow-Credentials': 'true',
     });
 
     const reader = result.body.getReader();
