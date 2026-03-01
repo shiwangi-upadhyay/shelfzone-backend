@@ -20,11 +20,11 @@ export const listTracesQuerySchema = z.object({
 });
 
 export const idParamSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().cuid(),
 });
 
 export const traceIdParamSchema = z.object({
-  traceId: z.string().uuid(),
+  traceId: z.string().cuid(),
 });
 
 export const agentIdParamSchema = z.object({
