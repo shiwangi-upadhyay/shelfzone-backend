@@ -1,4 +1,4 @@
-import { prisma } from '../../lib/prisma';
+import { prisma } from '../../lib/prisma.js';
 import type { FastifyReply } from 'fastify';
 
 export interface ActivityEvent {
@@ -143,10 +143,10 @@ class ActivityService {
   /**
    * Notify token usage update
    */
-  async notifyTokenUpdate(userId: string, agentId: string): Promise<void> {
+  async notifyTokenUpdate(userId: string, agentId: string, conversationId: string): Promise<void> {
     try {
       const context = await prisma.agentContext.findFirst({
-        where: { userId, agentId },
+        where: { conversationId, agentId },
       });
 
       if (!context) return;
@@ -157,9 +157,9 @@ class ActivityService {
         data: {
           agentId,
           tokenUsage: {
-            used: context.totalTokens,
-            limit: context.tokenLimit,
-            percentage: (context.totalTokens / context.tokenLimit) * 100,
+            used: context.tokensUsed,
+            limit: context.maxTokens,
+            percentage: (context.tokensUsed / context.maxTokens) * 100,
           },
         },
       });

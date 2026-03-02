@@ -34,6 +34,7 @@ import agentRequestRoutes from './modules/agent-requests/agent-request.routes.js
 import gatewayProxyRoutes from './modules/gateway-proxy/proxy.routes.js';
 import gatewayKeyRoutes from './modules/settings/gateway-key.routes.js';
 import commandCenterRoutes from './modules/command-center/command-center.routes.js';
+import agentSharingRoutes from './modules/agent-sharing/agent-sharing.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -84,6 +85,9 @@ await app.register(traceRoutes);
 await app.register(agentGatewayRoutes);
 await app.register(commandCenterRoutes, { prefix: '/api/command-center' });
 await app.register(userApiKeyRoutes);
+
+// Agent Sharing (Phase 4)
+await app.register(agentSharingRoutes, { prefix: '/api' });
 
 // Settings
 await app.register(gatewayKeyRoutes);

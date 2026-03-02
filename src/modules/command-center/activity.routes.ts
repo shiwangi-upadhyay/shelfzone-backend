@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { activityService } from './activity.service';
+import { activityService } from './activity.service.js';
 import { authenticate } from '../../middleware/auth.middleware.js';
 
 export async function activityRoutes(fastify: FastifyInstance) {

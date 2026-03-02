@@ -35,8 +35,6 @@ model User {
   userGatewayKey         UserGatewayKey?
   conversations          Conversation[]
   conversationTabs       ConversationTab[]
-  ownedShares            AgentShare[]       @relation("ShareOwner")
-  receivedShares         AgentShare[]       @relation("ShareReceiver")
 
   @@map("users")
 }
@@ -380,7 +378,6 @@ model AgentRegistry {
   delegatedSessions   TraceSession[]    @relation("TraceSessionDelegator")
   conversations       Conversation[]
   agentContexts       AgentContext[]
-  shares              AgentShare[]
 
   @@map("agent_registry")
 }
@@ -788,7 +785,6 @@ model Conversation {
   tab           ConversationTab? @relation(fields: [tabId], references: [id], onDelete: SetNull)
   messages      Message[]
   agentContexts AgentContext[]
-  agentShares   AgentShare[]
 
   @@index([userId])
   @@index([agentId])
