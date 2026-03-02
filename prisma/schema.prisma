@@ -34,6 +34,7 @@ model User {
   userApiKey             UserApiKey?
   userGatewayKey         UserGatewayKey?
   conversations          Conversation[]
+  conversationTabs       ConversationTab[]
 
   @@map("users")
 }
@@ -754,20 +755,39 @@ enum AgentRequestStatus {
   CANCELLED
 }
 
+model ConversationTab {
+  id            String         @id @default(cuid())
+  userId        String         @map("user_id")
+  title         String         @default("New Conversation")
+  position      Int
+  isActive      Boolean        @default(false) @map("is_active")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@unique([userId, position])
+  @@index([userId, isActive])
+  @@map("conversation_tabs")
+}
+
 model Conversation {
-  id        String    @id @default(cuid())
-  userId    String    @map("user_id")
-  agentId   String    @map("agent_id")
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  agentId   String           @map("agent_id")
+  tabId     String?          @map("tab_id")
   title     String
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  agent     AgentRegistry @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent     AgentRegistry    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  tab       ConversationTab? @relation(fields: [tabId], references: [id], onDelete: SetNull)
   messages  Message[]
 
   @@unique([userId, agentId])
   @@index([userId])
   @@index([agentId])
+  @@index([tabId])
   @@map("conversations")
 }
 

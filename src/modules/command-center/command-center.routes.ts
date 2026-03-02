@@ -8,6 +8,7 @@ import {
   handleUpdateConversation,
   handleDeleteConversation,
 } from './conversation.controller.js';
+import { tabsRoutes } from './tabs.routes.js';
 
 export default async function commandCenterRoutes(fastify: FastifyInstance) {
   // POST /api/command-center/message - Send message to agent with streaming response
@@ -47,4 +48,7 @@ export default async function commandCenterRoutes(fastify: FastifyInstance) {
     { preHandler: authenticate },
     handleDeleteConversation,
   );
+
+  // Conversation tabs endpoints
+  await tabsRoutes(fastify);
 }
