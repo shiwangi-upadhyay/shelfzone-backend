@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { costAnalyticsService } from './cost-analytics.service.js';
+import { prisma } from '../../lib/prisma.js';
 
 export async function costAnalyticsRoutes(fastify: FastifyInstance) {
   /**
@@ -73,7 +74,7 @@ export async function costAnalyticsRoutes(fastify: FastifyInstance) {
         const userId = request.user!.userId;
 
         // Get active tab
-        const activeTab = await fastify.prisma.conversationTab.findFirst({
+        const activeTab = await prisma.conversationTab.findFirst({
           where: { userId, isActive: true },
         });
 
@@ -84,6 +85,7 @@ export async function costAnalyticsRoutes(fastify: FastifyInstance) {
 
         return reply.send({ data: breakdown });
       } catch (error: any) {
+        console.error('[cost-analytics] Error fetching current tab costs:', error);
         return reply.status(500).send({ error: error.message || 'Failed to fetch cost breakdown' });
       }
     }

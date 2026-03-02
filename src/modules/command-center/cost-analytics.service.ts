@@ -95,9 +95,9 @@ export class CostAnalyticsService {
     if (tabId) {
       const tab = await prisma.conversationTab.findUnique({
         where: { id: tabId },
-        select: { name: true },
+        select: { title: true },
       });
-      tabName = tab?.name || null;
+      tabName = tab?.title || null;
     }
 
     // Get all conversations in this tab
@@ -165,7 +165,7 @@ export class CostAnalyticsService {
   async getAllTabsCostBreakdown(userId: string): Promise<TabCostBreakdown[]> {
     const tabs = await prisma.conversationTab.findMany({
       where: { userId },
-      select: { id: true, name: true },
+      select: { id: true, title: true },
     });
 
     const results: TabCostBreakdown[] = [];
