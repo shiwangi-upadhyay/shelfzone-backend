@@ -2,6 +2,7 @@ import { prisma } from '../../lib/prisma.js';
 import { getAgentConfig } from './agents-config.js';
 import { DelegationResult } from './delegation.schemas.js';
 import { Prisma } from '@prisma/client';
+import { activityService } from './activity.service.js';
 
 // Cost rates per million tokens
 const COST_RATES: Record<string, { input: number; output: number }> = {
@@ -97,6 +98,15 @@ export class DelegationService {
       },
     });
 
+    // Notify delegation start
+    activityService.notifyDelegationStart(
+      this.userId,
+      agent.id,
+      agentName,
+      instruction,
+      traceSession.id
+    );
+
     try {
       // 4. Make REAL Anthropic API call
       const requestBody = {
@@ -154,6 +164,9 @@ export class DelegationService {
         },
       });
 
+      // Notify delegation complete
+      activityService.notifyDelegationComplete(this.userId, agent.id, traceSession.id);
+
       // 8. Return delegation result
       return {
         success: true,
@@ -182,6 +195,14 @@ export class DelegationService {
           durationMs,
         },
       });
+
+      // Notify delegation error
+      activityService.notifyDelegationError(
+        this.userId,
+        agent.id,
+        error.message || 'Unknown error',
+        traceSession.id
+      );
 
       throw error;
     }

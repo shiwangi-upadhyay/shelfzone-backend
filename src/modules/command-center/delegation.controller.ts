@@ -6,6 +6,7 @@ import { getToolsForAgent } from './delegation-tools.js';
 import { MASTER_AGENT_CONFIG } from './agents-config.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
+import { activityService } from './activity.service.js';
 
 const COST_RATES: Record<string, { input: number; output: number }> = {
   'claude-opus-4-6': { input: 15, output: 75 },
