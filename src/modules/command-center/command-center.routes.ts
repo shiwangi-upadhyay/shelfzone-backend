@@ -12,6 +12,7 @@ import {
 import { tabsRoutes } from './tabs.routes.js';
 import { agentContextRoutes } from './agent-context.routes.js';
 import { activityRoutes } from './activity.routes.js';
+import { costAnalyticsRoutes } from './cost-analytics.routes.js';
 
 export default async function commandCenterRoutes(fastify: FastifyInstance) {
   // POST /api/command-center/message - Send message to agent with streaming response
@@ -67,4 +68,7 @@ export default async function commandCenterRoutes(fastify: FastifyInstance) {
 
   // Activity stream endpoints
   fastify.register(activityRoutes, { prefix: '/activity' });
+
+  // Cost analytics endpoints
+  fastify.register(costAnalyticsRoutes, { prefix: '/costs' });
 }
