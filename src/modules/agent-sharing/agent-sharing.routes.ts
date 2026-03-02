@@ -8,8 +8,16 @@ import {
   handleUpdateShare,
   handleReleaseTransfer,
 } from './agent-sharing.controller.js';
+import { handleGetUsersForSharing } from './users.controller.js';
 
 export default async function agentSharingRoutes(fastify: FastifyInstance) {
+  // Get users for sharing dropdown
+  fastify.get(
+    '/agents/users',
+    { preHandler: authenticate },
+    handleGetUsersForSharing
+  );
+
   // Share agent with user
   fastify.post<{ Params: { id: string }; Body: unknown }>(
     '/agents/:id/share',
