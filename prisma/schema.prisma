@@ -875,3 +875,27 @@ model AgentShare {
   @@index([status])
   @@map("agent_shares")
 }
+
+enum HolidayType {
+  NATIONAL
+  REGIONAL
+  COMPANY
+}
+
+model Holiday {
+  id          String      @id @default(cuid())
+  name        String
+  date        DateTime    @db.Date
+  type        HolidayType @default(NATIONAL)
+  isOptional  Boolean     @default(false) @map("is_optional")
+  year        Int
+  description String?
+  createdBy   String      @map("created_by")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  @@unique([date, name])
+  @@index([year])
+  @@index([date])
+  @@map("holidays")
+}
