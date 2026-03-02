@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { handleSendMessage } from './command-center.controller.js';
+import { handleDelegationMessage } from './delegation.controller.js';
 import {
   handleListConversations,
   handleGetConversation,
@@ -17,6 +18,13 @@ export default async function commandCenterRoutes(fastify: FastifyInstance) {
     '/message',
     { preHandler: authenticate },
     handleSendMessage,
+  );
+
+  // POST /api/command-center/delegate - Send message with delegation support
+  fastify.post(
+    '/delegate',
+    { preHandler: authenticate },
+    handleDelegationMessage,
   );
 
   // Conversation management endpoints

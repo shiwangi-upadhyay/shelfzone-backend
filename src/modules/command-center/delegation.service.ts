@@ -62,7 +62,7 @@ export class DelegationService {
         data: {
           name: agentName,
           slug: agentName.toLowerCase(),
-          type: 'SERVICE',
+          type: 'INTEGRATION',
           status: 'ACTIVE',
           model: agentConfig.model,
           systemPrompt: agentConfig.systemPrompt,
@@ -73,10 +73,21 @@ export class DelegationService {
       });
     }
 
-    // 3. Create trace session for this delegation
+    // 3. Create task trace first if no parent
+    const taskTraceId = this.parentSessionId || (await prisma.taskTrace.create({
+      data: {
+        ownerId: this.userId,
+        masterAgentId: agent.id,
+        instruction,
+        status: 'running',
+        startedAt,
+      },
+    })).id;
+
+    // 4. Create trace session for this delegation
     const traceSession = await prisma.traceSession.create({
       data: {
-        taskTraceId: this.parentSessionId || undefined,
+        taskTraceId,
         agentId: agent.id,
         instruction,
         status: 'running',
