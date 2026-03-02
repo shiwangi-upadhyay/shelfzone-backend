@@ -14,10 +14,32 @@ interface SessionLogQuery {
 }
 
 export async function getSessionLogs(query: SessionLogQuery) {
-  const { page, limit, agentId, teamId, dateFrom, dateTo, status, costMin, costMax } = query;
+  const { page, limit, agentId: agentIdOrSlug, teamId, dateFrom, dateTo, status, costMin, costMax } = query;
   const where: Prisma.AgentSessionWhereInput = {};
 
-  if (agentId) where.agentId = agentId;
+  // If agentId provided, try to resolve it (could be ID or slug)
+  if (agentIdOrSlug) {
+    // Try to find agent by ID first
+    let agent = await prisma.agentRegistry.findUnique({
+      where: { id: agentIdOrSlug },
+      select: { id: true },
+    });
+
+    // If not found by ID, try by slug
+    if (!agent) {
+      agent = await prisma.agentRegistry.findFirst({
+        where: { slug: agentIdOrSlug },
+        select: { id: true },
+      });
+    }
+
+    // If agent found, use its ID; otherwise use the original value
+    if (agent) {
+      where.agentId = agent.id;
+    } else {
+      where.agentId = agentIdOrSlug; // Use original value (will return no results if invalid)
+    }
+  }
   if (status) where.status = status;
   if (dateFrom || dateTo) {
     where.createdAt = {};

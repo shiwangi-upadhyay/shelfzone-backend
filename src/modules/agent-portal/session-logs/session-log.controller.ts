@@ -5,7 +5,7 @@ import * as sessionLogService from './session-log.service.js';
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  agentId: z.string().cuid().optional(),
+  agentId: z.string().min(1).optional(), // Accept any non-empty string (CUID, UUID, or slug)
   teamId: z.string().cuid().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
@@ -14,7 +14,7 @@ const listQuerySchema = z.object({
   costMax: z.coerce.number().optional(),
 });
 
-const idParamsSchema = z.object({ id: z.string().cuid() });
+const idParamsSchema = z.object({ id: z.string().min(1) }); // Accept any non-empty string
 
 export async function listSessionLogsHandler(request: FastifyRequest, reply: FastifyReply) {
   const parsed = listQuerySchema.safeParse(request.query);

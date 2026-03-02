@@ -31,7 +31,7 @@ export const updateAgentSchema = z.object({
 });
 
 export const agentParamsSchema = z.object({
-  id: z.string().cuid(),
+  id: z.string().min(1), // Accept any non-empty string (CUID, UUID, or slug)
 });
 
 export const listAgentsQuerySchema = z.object({

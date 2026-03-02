@@ -201,9 +201,10 @@ export async function getAgentHierarchy() {
   }));
 }
 
-export async function getAgentById(id: string) {
-  const agent = await prisma.agentRegistry.findUnique({
-    where: { id },
+export async function getAgentById(idOrSlug: string) {
+  // Try lookup by ID first
+  let agent = await prisma.agentRegistry.findUnique({
+    where: { id: idOrSlug },
     include: {
       team: { select: { id: true, name: true } },
       parentAgent: { select: { id: true, name: true, slug: true } },
@@ -218,13 +219,35 @@ export async function getAgentById(id: string) {
       },
     },
   });
+
+  // If not found by ID, try lookup by slug
+  if (!agent) {
+    agent = await prisma.agentRegistry.findFirst({
+      where: { slug: idOrSlug },
+      include: {
+        team: { select: { id: true, name: true } },
+        parentAgent: { select: { id: true, name: true, slug: true } },
+        childAgents: {
+          where: { status: 'ACTIVE' },
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true, slug: true, model: true, description: true, status: true },
+        },
+        dailyStats: {
+          orderBy: { date: 'desc' },
+          take: 7,
+        },
+      },
+    });
+  }
+
   if (!agent) throw { statusCode: 404, error: 'Not Found', message: 'Agent not found' };
   return agent;
 }
 
-export async function getAgentDetail(id: string) {
-  const agent = await prisma.agentRegistry.findUnique({
-    where: { id },
+export async function getAgentDetail(idOrSlug: string) {
+  // Try lookup by ID first
+  let agent = await prisma.agentRegistry.findUnique({
+    where: { id: idOrSlug },
     include: {
       team: { select: { id: true, name: true } },
       configLogs: {
@@ -234,6 +257,22 @@ export async function getAgentDetail(id: string) {
       },
     },
   });
+
+  // If not found by ID, try lookup by slug
+  if (!agent) {
+    agent = await prisma.agentRegistry.findFirst({
+      where: { slug: idOrSlug },
+      include: {
+        team: { select: { id: true, name: true } },
+        configLogs: {
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          include: { changer: { select: { id: true, email: true } } },
+        },
+      },
+    });
+  }
+
   if (!agent) throw { statusCode: 404, error: 'Not Found', message: 'Agent not found' };
 
   return {

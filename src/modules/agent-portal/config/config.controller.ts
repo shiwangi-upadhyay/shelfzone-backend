@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { logAudit } from '../../../lib/audit.js';
 import * as configService from './config.service.js';
 
-const agentIdParamsSchema = z.object({ agentId: z.string().cuid() });
+const agentIdParamsSchema = z.object({ agentId: z.string().min(1) }); // Accept any non-empty string (CUID, UUID, or slug)
 const modelSchema = z.object({ model: z.string().min(1).max(100), reason: z.string().optional() });
 const promptSchema = z.object({
   systemPrompt: z.string().min(1).max(50000),
