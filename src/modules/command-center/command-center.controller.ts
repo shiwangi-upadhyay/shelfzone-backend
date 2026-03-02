@@ -2,6 +2,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { sendMessageSchema, SendMessageInput } from './command-center.schemas.js';
 import { streamMessage, calculateCost } from './command-center.service.js';
 import { AgentContextService } from './agent-context.service.js';
+import { agentSharingService } from '../agent-sharing/agent-sharing.service.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 
@@ -24,6 +25,15 @@ export async function handleSendMessage(
   const userId = request.user!.userId;
 
   try {
+    // Check if user has permission to use this agent (either owner or shared with control permission)
+    const canControl = await agentSharingService.canUserControlAgent(agentId, userId);
+    if (!canControl) {
+      return reply.status(403).send({
+        error: 'Forbidden',
+        message: 'You do not have permission to send messages to this agent',
+      });
+    }
+
     const result = await streamMessage(userId, agentId, conversationId, message);
 
     // Set SSE headers with CORS
@@ -124,6 +134,17 @@ export async function handleSendMessage(
           traceSessionId: result.traceSessionId,
         },
       });
+
+      // Track shared agent usage costs (if user is using a shared agent)
+      const agent = await prisma.agentRegistry.findUnique({
+        where: { id: agentId },
+        select: { createdBy: true },
+      });
+
+      if (agent && agent.createdBy !== userId) {
+        // This is a shared agent - track cost for the share
+        await agentSharingService.trackSharedCost(agentId, userId, cost.totalCost);
+      }
 
       // Track agent context usage
       const totalTokens = inputTokens + outputTokens;
