@@ -11,7 +11,7 @@ export const updateTabSchema = z.object({
 });
 
 export const tabIdParamSchema = z.object({
-  id: z.string().cuid(),
+  id: z.string().min(1),
 });
 
 export type CreateTabInput = z.infer<typeof createTabSchema>;

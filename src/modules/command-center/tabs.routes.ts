@@ -24,7 +24,17 @@ export async function tabsRoutes(app: FastifyInstance) {
     { preHandler: [authenticate] },
     async (request, reply) => {
       const userId = request.user!.userId;
-      const input = createTabSchema.parse(request.body);
+      
+      // Validate body
+      const bodyValidation = createTabSchema.safeParse(request.body);
+      if (!bodyValidation.success) {
+        return reply.code(400).send({ 
+          error: 'Validation Error',
+          message: bodyValidation.error.issues.map((e) => e.message).join(', ')
+        });
+      }
+      
+      const input = bodyValidation.data;
 
       try {
         const tab = await tabsService.createTab(userId, input);
@@ -44,8 +54,28 @@ export async function tabsRoutes(app: FastifyInstance) {
     { preHandler: [authenticate] },
     async (request, reply) => {
       const userId = request.user!.userId;
-      const { id } = tabIdParamSchema.parse(request.params);
-      const input = updateTabSchema.parse(request.body);
+      
+      // Validate params
+      const paramsValidation = tabIdParamSchema.safeParse(request.params);
+      if (!paramsValidation.success) {
+        return reply.code(400).send({ 
+          error: 'Validation Error',
+          message: paramsValidation.error.issues.map((e) => e.message).join(', ')
+        });
+      }
+      
+      const { id } = paramsValidation.data;
+      
+      // Validate body
+      const bodyValidation = updateTabSchema.safeParse(request.body);
+      if (!bodyValidation.success) {
+        return reply.code(400).send({ 
+          error: 'Validation Error',
+          message: bodyValidation.error.issues.map((e) => e.message).join(', ')
+        });
+      }
+      
+      const input = bodyValidation.data;
 
       try {
         const tab = await tabsService.updateTab(userId, id, input);
@@ -65,7 +95,17 @@ export async function tabsRoutes(app: FastifyInstance) {
     { preHandler: [authenticate] },
     async (request, reply) => {
       const userId = request.user!.userId;
-      const { id } = tabIdParamSchema.parse(request.params);
+      
+      // Validate params
+      const paramsValidation = tabIdParamSchema.safeParse(request.params);
+      if (!paramsValidation.success) {
+        return reply.code(400).send({ 
+          error: 'Validation Error',
+          message: paramsValidation.error.issues.map((e) => e.message).join(', ')
+        });
+      }
+      
+      const { id } = paramsValidation.data;
 
       try {
         const result = await tabsService.deleteTab(userId, id);
