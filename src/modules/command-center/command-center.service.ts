@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { getUserDecryptedKey } from '../api-keys/api-key.service.js';
+import { getToolsForAgent } from './delegation-tools.js';
 import { Prisma } from '@prisma/client';
 
 // Cost rates per million tokens
@@ -34,6 +35,9 @@ interface StreamResult {
   taskTraceId: string;
   conversationId: string;
   agentModel: string;
+  agentName: string;
+  anthropicApiKey: string;
+  userId: string;
   startedAt: Date;
 }
 
@@ -150,6 +154,12 @@ export async function streamMessage(
     requestBody.system = agent.systemPrompt;
   }
 
+  // Add tools if this is SHIWANGI (master agent)
+  const tools = getToolsForAgent(agent.name);
+  if (tools.length > 0) {
+    requestBody.tools = tools;
+  }
+
   const startedAt = new Date();
 
   // 4. Create trace records
@@ -221,6 +231,9 @@ export async function streamMessage(
     taskTraceId: taskTrace.id,
     conversationId: conversation.id,
     agentModel: agent.model,
+    agentName: agent.name,
+    anthropicApiKey: apiKey,
+    userId,
     startedAt,
   };
 }
