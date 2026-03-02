@@ -377,6 +377,7 @@ model AgentRegistry {
   traceSessions       TraceSession[]    @relation("TraceSessionAgent")
   delegatedSessions   TraceSession[]    @relation("TraceSessionDelegator")
   conversations       Conversation[]
+  agentContexts       AgentContext[]
 
   @@map("agent_registry")
 }
@@ -779,10 +780,11 @@ model Conversation {
   title     String
   createdAt DateTime         @default(now()) @map("created_at")
   updatedAt DateTime         @updatedAt @map("updated_at")
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  agent     AgentRegistry    @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  tab       ConversationTab? @relation(fields: [tabId], references: [id], onDelete: SetNull)
-  messages  Message[]
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent         AgentRegistry    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  tab           ConversationTab? @relation(fields: [tabId], references: [id], onDelete: SetNull)
+  messages      Message[]
+  agentContexts AgentContext[]
 
   @@unique([userId, agentId])
   @@index([userId])
@@ -806,4 +808,22 @@ model Message {
   @@index([conversationId, createdAt])
   @@index([traceSessionId])
   @@map("messages")
+}
+
+model AgentContext {
+  id              String         @id @default(cuid())
+  conversationId  String         @map("conversation_id")
+  agentId         String         @map("agent_id")
+  tokensUsed      Int            @default(0) @map("tokens_used")
+  maxTokens       Int            @default(200000) @map("max_tokens")
+  lastMessageAt   DateTime       @default(now()) @map("last_message_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  conversation    Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  agent           AgentRegistry  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, agentId])
+  @@index([conversationId])
+  @@index([agentId])
+  @@map("agent_contexts")
 }

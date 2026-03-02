@@ -1,8 +1,11 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { sendMessageSchema, SendMessageInput } from './command-center.schemas.js';
 import { streamMessage, calculateCost } from './command-center.service.js';
+import { AgentContextService } from './agent-context.service.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
+
+const agentContextService = new AgentContextService(prisma);
 
 export async function handleSendMessage(
   request: FastifyRequest,
@@ -121,6 +124,14 @@ export async function handleSendMessage(
           traceSessionId: result.traceSessionId,
         },
       });
+
+      // Track agent context usage
+      const totalTokens = inputTokens + outputTokens;
+      await agentContextService.trackTokenUsage(
+        result.conversationId,
+        agentId,
+        totalTokens
+      );
 
       // Send final events
       reply.raw.write(encoder.encode(`event: cost\ndata: ${JSON.stringify({ inputTokens, outputTokens, totalCost: cost.totalCost })}\n\n`));
