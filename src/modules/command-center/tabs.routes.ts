@@ -96,24 +96,15 @@ export async function tabsRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const userId = request.user!.userId;
       
-      // Debug logging
-      console.log('[DELETE /tabs/:id] Request params:', request.params);
-      console.log('[DELETE /tabs/:id] Param type:', typeof request.params);
-      console.log('[DELETE /tabs/:id] ID value:', (request.params as any).id);
-      
       // Validate params
       const paramsValidation = tabIdParamSchema.safeParse(request.params);
       if (!paramsValidation.success) {
-        console.error('[DELETE /tabs/:id] Validation failed:', paramsValidation.error);
-        console.error('[DELETE /tabs/:id] Validation issues:', JSON.stringify(paramsValidation.error.issues, null, 2));
         return reply.code(400).send({ 
           error: 'Validation Error',
-          message: paramsValidation.error.issues.map((e) => e.message).join(', '),
-          details: paramsValidation.error.issues, // Add detailed error info
+          message: paramsValidation.error.issues.map((e) => e.message).join(', ')
         });
       }
       
-      console.log('[DELETE /tabs/:id] Validation passed, ID:', paramsValidation.data.id);
       const { id } = paramsValidation.data;
 
       try {
