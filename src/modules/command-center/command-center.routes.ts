@@ -4,6 +4,7 @@ import { handleSendMessage } from './command-center.controller.js';
 import { handleDelegationMessage } from './delegation.controller.js';
 import { handleFileUpload } from './file-upload.controller.js';
 import { handleSearch } from './search.controller.js';
+import { handleExport } from './export.controller.js';
 import {
   handleListConversations,
   handleGetConversation,
@@ -57,6 +58,13 @@ export default async function commandCenterRoutes(fastify: FastifyInstance) {
     '/conversations/:id',
     { preHandler: authenticate },
     handleGetConversation,
+  );
+
+  // GET /api/command-center/conversations/:id/export - Export conversation
+  fastify.get<{ Params: { id: string } }>(
+    '/conversations/:id/export',
+    { preHandler: authenticate },
+    handleExport,
   );
 
   fastify.post(
