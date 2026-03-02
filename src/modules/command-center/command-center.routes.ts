@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/auth.middleware.js';
 import { handleSendMessage } from './command-center.controller.js';
 import { handleDelegationMessage } from './delegation.controller.js';
+import { handleFileUpload } from './file-upload.controller.js';
 import {
   handleListConversations,
   handleGetConversation,
@@ -16,6 +17,13 @@ import { costAnalyticsRoutes } from './cost-analytics.routes.js';
 import { billingRoutes } from './billing.routes.js';
 
 export default async function commandCenterRoutes(fastify: FastifyInstance) {
+  // POST /api/command-center/upload - Upload file (image/code)
+  fastify.post(
+    '/upload',
+    { preHandler: authenticate },
+    handleFileUpload,
+  );
+
   // POST /api/command-center/message - Send message to agent with streaming response
   fastify.post(
     '/message',

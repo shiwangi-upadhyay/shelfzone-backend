@@ -21,7 +21,7 @@ export async function handleSendMessage(
     });
   }
 
-  const { agentId, conversationId, message } = validation.data;
+  const { agentId, conversationId, message, attachments } = validation.data;
   const userId = request.user!.userId;
 
   try {
@@ -34,7 +34,7 @@ export async function handleSendMessage(
       });
     }
 
-    const result = await streamMessage(userId, agentId, conversationId, message);
+    const result = await streamMessage(userId, agentId, conversationId, message, attachments);
 
     // Set SSE headers with CORS
     reply.raw.writeHead(200, {

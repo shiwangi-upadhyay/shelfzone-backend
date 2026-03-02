@@ -1,7 +1,9 @@
 import { prisma } from '../../lib/prisma.js';
 import { getUserDecryptedKey } from '../api-keys/api-key.service.js';
 import { getToolsForAgent } from './delegation-tools.js';
+import { formatFileForMessage } from './file-upload.service.js';
 import { Prisma } from '@prisma/client';
+import type { FileAttachment } from './command-center.schemas.js';
 
 // Cost rates per million tokens
 const COST_RATES: Record<string, { input: number; output: number }> = {
@@ -46,6 +48,7 @@ export async function streamMessage(
   agentId: string,
   conversationId: string | null | undefined,
   message: string,
+  attachments?: FileAttachment[],
 ): Promise<StreamResult> {
   // 1. Get user's Anthropic API key
   const apiKey = await getUserDecryptedKey(userId);
@@ -137,8 +140,28 @@ export async function streamMessage(
     },
   });
 
+  // 6. Build message content with attachments
+  let messageContent: any = message;
+  
+  if (attachments && attachments.length > 0) {
+    // Multimodal message: text + attachments
+    const content: any[] = [
+      { type: 'text', text: message },
+    ];
+
+    // Add each attachment
+    for (const file of attachments) {
+      const formattedFile = formatFileForMessage(file);
+      if (formattedFile) {
+        content.push(formattedFile);
+      }
+    }
+
+    messageContent = content;
+  }
+
   // Add current user message to context
-  messages.push({ role: 'user', content: message });
+  messages.push({ role: 'user', content: messageContent });
 
   // Build request body
   const requestBody: any = {
