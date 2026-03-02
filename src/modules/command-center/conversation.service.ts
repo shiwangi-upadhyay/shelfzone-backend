@@ -86,28 +86,62 @@ export async function getConversation(userId: string, conversationId: string) {
   };
 }
 
-export async function createConversation(
+export async function getConversationByAgentAndTab(
   userId: string,
   agentId: string,
-  title?: string,
+  tabId: string | null,
 ) {
-  // Check if conversation already exists for this user+agent
-  const existing = await prisma.conversation.findUnique({
+  const conversation = await prisma.conversation.findFirst({
     where: {
-      userId_agentId: {
-        userId,
-        agentId,
+      userId,
+      agentId,
+      tabId: tabId || null,
+    },
+    include: {
+      agent: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+      messages: {
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          role: true,
+          content: true,
+          tokenCount: true,
+          cost: true,
+          createdAt: true,
+        },
       },
     },
   });
 
-  if (existing) {
-    throw {
-      statusCode: 400,
-      error: 'Bad Request',
-      message: 'Conversation already exists for this agent',
-    };
+  if (!conversation) {
+    return { conversation: null, messages: [] };
   }
+
+  return {
+    conversation: {
+      id: conversation.id,
+      agentId: conversation.agentId,
+      agentName: conversation.agent.name,
+      title: conversation.title,
+      tabId: conversation.tabId,
+      createdAt: conversation.createdAt,
+      updatedAt: conversation.updatedAt,
+    },
+    messages: conversation.messages,
+  };
+}
+
+export async function createConversation(
+  userId: string,
+  agentId: string,
+  title?: string,
+  tabId?: string | null,
+) {
 
   // Verify agent exists
   const agent = await prisma.agentRegistry.findUnique({

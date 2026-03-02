@@ -786,10 +786,10 @@ model Conversation {
   messages      Message[]
   agentContexts AgentContext[]
 
-  @@unique([userId, agentId])
   @@index([userId])
   @@index([agentId])
   @@index([tabId])
+  @@index([userId, agentId, tabId])
   @@map("conversations")
 }
 

@@ -71,26 +71,43 @@ export async function streamMessage(
     throw { statusCode: 400, error: 'Bad Request', message: `Agent ${agent.name} is not active (status: ${agent.status})` };
   }
 
-  // 3. Get or create conversation
-  let conversation = await prisma.conversation.findUnique({
-    where: {
-      userId_agentId: {
-        userId,
-        agentId,
-      },
-    },
+  // 3. Get or create conversation (linked to active tab)
+  // First, get the active tab for this user
+  const activeTab = await prisma.conversationTab.findFirst({
+    where: { userId, isActive: true },
   });
 
-  if (!conversation) {
-    // Auto-generate title from first user message (max 50 chars)
-    const title = message.length > 50 ? message.substring(0, 50) + '...' : message;
-    conversation = await prisma.conversation.create({
-      data: {
+  // If conversationId is provided, use it; otherwise find/create for this agent+tab
+  let conversation;
+  if (conversationId) {
+    conversation = await prisma.conversation.findFirst({
+      where: { id: conversationId, userId },
+    });
+    if (!conversation) {
+      throw { statusCode: 404, error: 'Not Found', message: 'Conversation not found' };
+    }
+  } else {
+    // Find conversation for this agent in the active tab
+    conversation = await prisma.conversation.findFirst({
+      where: {
         userId,
         agentId,
-        title,
+        tabId: activeTab?.id || null,
       },
     });
+
+    if (!conversation) {
+      // Auto-generate title from first user message (max 50 chars)
+      const title = message.length > 50 ? message.substring(0, 50) + '...' : message;
+      conversation = await prisma.conversation.create({
+        data: {
+          userId,
+          agentId,
+          tabId: activeTab?.id || null,
+          title,
+        },
+      });
+    }
   }
 
   // 4. Load conversation history (last 10 messages)

@@ -6,6 +6,7 @@ import {
 import {
   listConversations,
   getConversation,
+  getConversationByAgentAndTab,
   createConversation,
   updateConversationTitle,
   deleteConversation,
@@ -16,8 +17,20 @@ export async function handleListConversations(
   reply: FastifyReply,
 ) {
   const userId = request.user!.userId;
+  const query = request.query as { agentId?: string; tabId?: string };
 
   try {
+    // If agentId is provided, return conversation for that agent+tab
+    if (query.agentId) {
+      const result = await getConversationByAgentAndTab(
+        userId,
+        query.agentId,
+        query.tabId || null
+      );
+      return reply.status(200).send({ data: result.conversation, messages: result.messages });
+    }
+
+    // Otherwise, list all conversations
     const result = await listConversations(userId);
     return reply.status(200).send(result);
   } catch (error: any) {
