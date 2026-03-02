@@ -73,8 +73,8 @@ export class DelegationService {
       });
     }
 
-    // 3. Create task trace first if no parent
-    const taskTraceId = this.parentSessionId || (await prisma.taskTrace.create({
+    // 3. Create task trace (always needed for trace_sessions FK)
+    const taskTrace = await prisma.taskTrace.create({
       data: {
         ownerId: this.userId,
         masterAgentId: agent.id,
@@ -82,12 +82,12 @@ export class DelegationService {
         status: 'running',
         startedAt,
       },
-    })).id;
+    });
 
     // 4. Create trace session for this delegation
     const traceSession = await prisma.traceSession.create({
       data: {
-        taskTraceId,
+        taskTraceId: taskTrace.id,
         agentId: agent.id,
         instruction,
         status: 'running',
