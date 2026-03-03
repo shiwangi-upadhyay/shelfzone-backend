@@ -6,9 +6,25 @@ import {
   getAgentHandler,
   updateAgentHandler,
   deleteAgentHandler,
+  syncFromOpenClawHandler,
+  listAgentsWithOpenClawHandler,
 } from './agent.controller.js';
 
 export default async function agentRoutes(app: FastifyInstance) {
+  // Sync agents from OpenClaw config (must be before :id route)
+  app.get(
+    '/api/agents/sync-from-openclaw',
+    { preHandler: [authenticate, requireRole('SUPER_ADMIN', 'HR_ADMIN')] },
+    syncFromOpenClawHandler,
+  );
+
+  // List agents with OpenClaw agents preferred
+  app.get(
+    '/api/agents/with-openclaw',
+    { preHandler: [authenticate] },
+    listAgentsWithOpenClawHandler,
+  );
+
   app.post(
     '/api/agents',
     { preHandler: [authenticate, requireRole('SUPER_ADMIN', 'HR_ADMIN')] },

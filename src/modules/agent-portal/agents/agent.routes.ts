@@ -10,9 +10,17 @@ import {
   getAgentDetailHandler,
   getAgentHierarchyHandler,
   healthCheckHandler,
+  syncFromOpenClawHandler,
 } from './agent.controller.js';
 
 export default async function agentRoutes(app: FastifyInstance) {
+  // Sync agents from OpenClaw config (must be before generic routes)
+  app.get(
+    '/api/agent-portal/agents/sync-from-openclaw',
+    { preHandler: [authenticate, requireRole('SUPER_ADMIN', 'HR_ADMIN')] },
+    syncFromOpenClawHandler,
+  );
+
   app.post(
     '/api/agent-portal/agents',
     { preHandler: [authenticate, requireRole('SUPER_ADMIN', 'HR_ADMIN')] },

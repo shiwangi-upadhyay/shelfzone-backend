@@ -132,3 +132,44 @@ export async function deleteAgentHandler(request: FastifyRequest, reply: Fastify
       .send({ error: e.error ?? 'Internal Error', message: e.message });
   }
 }
+
+/**
+ * Sync agents from OpenClaw configuration
+ * GET /api/agents/sync-from-openclaw
+ */
+export async function syncFromOpenClawHandler(request: FastifyRequest, reply: FastifyReply) {
+  try {
+    const result = await agentService.syncAgentsFromOpenClaw(request.user!.userId);
+    logAudit({
+      userId: request.user!.userId,
+      action: 'SYNC',
+      resource: 'Agent',
+      resourceId: 'openclaw-config',
+      details: { syncedCount: result.synced.length },
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+    return reply.send({ data: result });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; error?: string; message?: string };
+    return reply
+      .status(e.statusCode ?? 500)
+      .send({ error: e.error ?? 'Internal Error', message: e.message });
+  }
+}
+
+/**
+ * List agents with OpenClaw agents preferred
+ * GET /api/agents/with-openclaw
+ */
+export async function listAgentsWithOpenClawHandler(request: FastifyRequest, reply: FastifyReply) {
+  const parsed = listAgentsQuerySchema.safeParse(request.query);
+  if (!parsed.success) {
+    return reply
+      .status(400)
+      .send({ error: 'Validation Error', message: parsed.error.issues[0].message });
+  }
+
+  const result = await agentService.getAgentsPreferOpenClaw(parsed.data);
+  return reply.send(result);
+}

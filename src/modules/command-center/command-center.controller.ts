@@ -132,7 +132,10 @@ export async function handleSendMessage(
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
     
-    const openclawCommand = `openclaw agent --agent ${agent.name} --message "${message.replace(/"/g, '\\"')}" --json`;
+    // Use OpenClaw agent ID from metadata if available (synced agents), otherwise fall back to name
+    const agentMetadata = agent.metadata as Record<string, unknown> | null;
+    const openclawAgentId = agentMetadata?.openclawId as string || agent.name;
+    const openclawCommand = `openclaw agent --agent ${openclawAgentId} --message "${message.replace(/"/g, '\\"')}" --json`;
     
     request.log.info(`📤 Executing: ${openclawCommand}`);
     
@@ -147,8 +150,26 @@ export async function handleSendMessage(
     
     const openclawResult = JSON.parse(stdout);
     
-    // Extract the response text
-    const responseText = openclawResult.response || openclawResult.message || JSON.stringify(openclawResult);
+    // Extract the response text from OpenClaw's result.payloads[0].text structure
+    let responseText = '';
+    if (openclawResult.result?.payloads?.length > 0) {
+      // Combine all payload texts (in case there are multiple)
+      responseText = openclawResult.result.payloads
+        .map((p: { text?: string }) => p.text || '')
+        .filter((t: string) => t)
+        .join('\n\n');
+    }
+    
+    // Fallback to other possible structures
+    if (!responseText) {
+      responseText = openclawResult.response || openclawResult.message || openclawResult.text || '';
+    }
+    
+    // Last resort - stringify but warn
+    if (!responseText) {
+      request.log.warn('Could not extract clean text from OpenClaw response, falling back to JSON');
+      responseText = JSON.stringify(openclawResult, null, 2);
+    }
     
     // Create result object with needed properties
     const result = {

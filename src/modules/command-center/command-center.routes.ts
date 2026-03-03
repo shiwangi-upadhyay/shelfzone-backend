@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { authenticate } from '../../middleware/auth.middleware.js';
+import { requireRole } from '../../middleware/index.js';
 import { handleSendMessage } from './command-center.controller.js';
 import { handleDelegationMessage } from './delegation.controller.js';
 import { handleFileUpload } from './file-upload.controller.js';
@@ -17,8 +18,16 @@ import { agentContextRoutes } from './agent-context.routes.js';
 import { activityRoutes } from './activity.routes.js';
 import { costAnalyticsRoutes } from './cost-analytics.routes.js';
 import { billingRoutes } from './billing.routes.js';
+import { syncFromOpenClawHandler } from '../agents/agent.controller.js';
 
 export default async function commandCenterRoutes(fastify: FastifyInstance) {
+  // GET /api/command-center/agents/sync-from-openclaw - Sync agents from OpenClaw config
+  fastify.get(
+    '/agents/sync-from-openclaw',
+    { preHandler: [authenticate, requireRole('SUPER_ADMIN', 'HR_ADMIN')] },
+    syncFromOpenClawHandler,
+  );
+
   // GET /api/command-center/search - Search conversations
   fastify.get(
     '/search',

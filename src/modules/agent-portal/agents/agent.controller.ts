@@ -7,6 +7,7 @@ import {
   listAgentsQuerySchema,
 } from './agent.schemas.js';
 import * as agentService from './agent.service.js';
+import { syncAgentsFromOpenClaw } from '../../agents/agent.service.js';
 
 export async function registerAgentHandler(request: FastifyRequest, reply: FastifyReply) {
   const parsed = createAgentSchema.safeParse(request.body);
@@ -204,6 +205,31 @@ export async function healthCheckHandler(request: FastifyRequest, reply: Fastify
       action: 'HEALTH_CHECK',
       resource: 'AgentRegistry',
       resourceId: parsed.data.id,
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+    });
+    return reply.send({ data: result });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; error?: string; message?: string };
+    return reply
+      .status(e.statusCode ?? 500)
+      .send({ error: e.error ?? 'Internal Error', message: e.message });
+  }
+}
+
+/**
+ * Sync agents from OpenClaw configuration
+ * GET /api/agent-portal/agents/sync-from-openclaw
+ */
+export async function syncFromOpenClawHandler(request: FastifyRequest, reply: FastifyReply) {
+  try {
+    const result = await syncAgentsFromOpenClaw(request.user!.userId);
+    logAudit({
+      userId: request.user!.userId,
+      action: 'SYNC',
+      resource: 'AgentRegistry',
+      resourceId: 'openclaw-config',
+      details: { syncedCount: result.synced.length },
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });
