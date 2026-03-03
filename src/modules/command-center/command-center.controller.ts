@@ -132,7 +132,7 @@ export async function handleSendMessage(
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
     
-    const openclawCommand = `openclaw agent --agent ${agent.name} --message "${message.replace(/"/g, '\\"')}" --deliver --json`;
+    const openclawCommand = `openclaw agent --agent ${agent.name} --message "${message.replace(/"/g, '\\"')}" --json`;
     
     request.log.info(`📤 Executing: ${openclawCommand}`);
     
