@@ -71,48 +71,34 @@ export function initializeBridgeWebSocket(server: Server): WebSocketServer {
       return;
     }
 
-    try {
-      // Verify pairing token
-      const pairingToken = await prisma.$queryRaw<Array<{ userId: string; expiresAt: Date }>>`
-        SELECT user_id as "userId", expires_at as "expiresAt" 
-        FROM pairing_tokens 
-        WHERE token = ${token}
-        LIMIT 1
-      `;
+    // Set up node state and message listener IMMEDIATELY
+    // (before async token verification, to catch messages sent early)
+    let nodeState: ConnectedNode | null = null;
+    let userId: string | null = null;
+    let authenticated = false;
+    const messageQueue: Buffer[] = [];
 
-      if (!pairingToken || pairingToken.length === 0) {
-        logger.warn(`⚠️ Connection rejected: Invalid token ${token.substring(0, 10)}...`);
-        ws.close(1008, 'Invalid token');
-        return;
-      }
-
-      const { userId, expiresAt } = pairingToken[0];
-
-      // Check if token expired
-      if (new Date() > expiresAt) {
-        logger.warn(`⚠️ Connection rejected: Token expired for user ${userId}`);
-        ws.close(1008, 'Token expired');
-        return;
-      }
-
-      logger.info(`✅ Token verified for user ${userId}`);
-
-      // Send auth_ok
-      const authOkMsg: ServerMessage = { type: 'auth_ok' };
-      ws.send(JSON.stringify(authOkMsg));
-
-      // Set up message handler
-      let nodeState: ConnectedNode | null = null;
-
-      ws.on('message', async (data: Buffer) => {
+    console.log('[WS] 🔧 Attaching message listener IMMEDIATELY for', req.socket.remoteAddress);
+      
+    ws.on('message', async (data: Buffer) => {
+        console.log('[WS] 📨 Raw message received:', data.toString());
+        
         try {
           const message: NodeMessage = JSON.parse(data.toString());
+          console.log('[WS] 📦 Parsed message:', JSON.stringify(message, null, 2));
+          
+          // If not authenticated yet, queue the message
+          if (!authenticated) {
+            console.log('[WS] 📥 Queueing message until authentication completes');
+            messageQueue.push(data);
+            return;
+          }
           
           logger.debug(`📨 Received message from ${nodeState?.nodeId || 'pending'}: ${message.type}`);
 
           switch (message.type) {
             case 'handshake':
-              await handleHandshake(ws, userId, token, message, (node) => {
+              await handleHandshake(ws, userId!, token, message, (node) => {
                 nodeState = node;
               });
               break;
@@ -151,6 +137,7 @@ export function initializeBridgeWebSocket(server: Server): WebSocketServer {
               logger.warn(`⚠️ Unknown message type: ${(message as any).type}`);
           }
         } catch (err) {
+          console.error('[WS] ❌ Message processing error:', err);
           logger.error('❌ Error processing message:', err);
           const errorMsg: ServerMessage = { 
             type: 'error', 
@@ -179,10 +166,54 @@ export function initializeBridgeWebSocket(server: Server): WebSocketServer {
         logger.error('❌ WebSocket error:', error);
       });
 
-    } catch (error) {
-      logger.error('❌ Error handling WebSocket connection:', error);
-      ws.close(1011, 'Internal server error');
-    }
+      // NOW verify token after handlers are set up
+      try {
+        const pairingToken = await prisma.$queryRaw<Array<{ userId: string; expiresAt: Date }>>`
+          SELECT user_id as "userId", expires_at as "expiresAt" 
+          FROM pairing_tokens 
+          WHERE token = ${token}
+          LIMIT 1
+        `;
+
+        if (!pairingToken || pairingToken.length === 0) {
+          logger.warn(`⚠️ Connection rejected: Invalid token ${token.substring(0, 10)}...`);
+          ws.close(1008, 'Invalid token');
+          return;
+        }
+
+        const tokenData = pairingToken[0];
+
+        // Check if token expired
+        if (new Date() > tokenData.expiresAt) {
+          logger.warn(`⚠️ Connection rejected: Token expired for user ${tokenData.userId}`);
+          ws.close(1008, 'Token expired');
+          return;
+        }
+
+        logger.info(`✅ Token verified for user ${tokenData.userId}`);
+        
+        // Set userId and mark as authenticated
+        userId = tokenData.userId;
+        authenticated = true;
+
+        // Send auth_ok
+        const authOkMsg: ServerMessage = { type: 'auth_ok' };
+        ws.send(JSON.stringify(authOkMsg));
+        console.log('[WS] ✅ auth_ok sent to', req.socket.remoteAddress);
+
+        // Process any queued messages
+        if (messageQueue.length > 0) {
+          console.log(`[WS] 📤 Processing ${messageQueue.length} queued messages`);
+          for (const queuedData of messageQueue) {
+            ws.emit('message', queuedData);
+          }
+          messageQueue.length = 0;
+        }
+
+      } catch (error) {
+        logger.error('❌ Error verifying token:', error);
+        ws.close(1011, 'Authentication failed');
+      }
   });
 
   // Start heartbeat interval
@@ -203,7 +234,11 @@ async function handleHandshake(
   message: NodeMessage,
   onComplete: (node: ConnectedNode) => void
 ) {
+  console.log('[WS] 🤝 Processing handshake...');
+  console.log('[WS] 📋 Message:', JSON.stringify(message, null, 2));
+  
   if (!message.nodeKey || !message.agents) {
+    console.log('[WS] ❌ Invalid handshake: missing nodeKey or agents');
     const errorMsg: ServerMessage = { 
       type: 'error', 
       message: 'Invalid handshake: missing nodeKey or agents' 
@@ -214,6 +249,10 @@ async function handleHandshake(
 
   const { nodeKey, agents, platform } = message;
 
+  console.log('[WS] 📋 Node key:', nodeKey);
+  console.log('[WS] 🤖 Agents:', agents);
+  console.log('[WS] 💻 Platform:', platform);
+  
   logger.info(`🤝 Handshake from nodeKey: ${nodeKey}, platform: ${platform}, agents: ${agents.length}`);
 
   try {
@@ -240,9 +279,11 @@ async function handleHandshake(
       }
     });
 
+    console.log('[WS] ✅ Node created/updated in DB:', node.id);
     logger.info(`✅ Node created/updated: ${node.id}`);
 
     // Register agents on this node
+    console.log('[WS] 🤖 Registering agents...');
     for (const agentName of agents) {
       try {
         // Check if agent exists in registry
@@ -259,6 +300,7 @@ async function handleHandshake(
             where: { id: agent.id },
             data: { nodeId: node.id }
           });
+          console.log(`[WS] ✅ Updated agent ${agentName} with nodeId ${node.id}`);
           logger.info(`✅ Updated agent ${agentName} with nodeId ${node.id}`);
         } else {
           // Create new agent entry
@@ -274,9 +316,11 @@ async function handleHandshake(
               createdBy: userId
             }
           });
+          console.log(`[WS] ✅ Created new agent ${agentName} on nodeId ${node.id}`);
           logger.info(`✅ Created new agent ${agentName} on nodeId ${node.id}`);
         }
       } catch (agentError) {
+        console.error(`[WS] ❌ Error registering agent ${agentName}:`, agentError);
         logger.error(`❌ Error registering agent ${agentName}:`, agentError);
       }
     }
@@ -308,9 +352,11 @@ async function handleHandshake(
     };
     ws.send(JSON.stringify(completeMsg));
 
+    console.log(`[WS] 🎉 Node ${node.id} successfully paired and online`);
     logger.info(`🎉 Node ${node.id} successfully paired and online`);
 
   } catch (error) {
+    console.error('[WS] ❌ Error during handshake:', error);
     logger.error('❌ Error during handshake:', error);
     const errorMsg: ServerMessage = { 
       type: 'error', 
