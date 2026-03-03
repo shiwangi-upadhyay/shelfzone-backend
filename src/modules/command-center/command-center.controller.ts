@@ -137,43 +137,80 @@ export async function handleSendMessage(
       });
 
       // Track shared agent usage costs (if user is using a shared agent)
+      console.log('[COST_ATTRIBUTION] Starting cost attribution check', {
+        agentId,
+        userId,
+        traceSessionId: result.traceSessionId,
+      });
+
       const agent = await prisma.agentRegistry.findUnique({
         where: { id: agentId },
         select: { createdBy: true },
       });
 
+      console.log('[COST_ATTRIBUTION] Agent lookup result', {
+        agentFound: !!agent,
+        createdBy: agent?.createdBy,
+        currentUserId: userId,
+      });
+
       const ownerId = agent?.createdBy || userId;
       const isSharedAgent = agent && agent.createdBy !== userId;
 
+      console.log('[COST_ATTRIBUTION] Shared agent check', {
+        ownerId,
+        isSharedAgent,
+        willUpdateCostPaidBy: isSharedAgent,
+      });
+
       if (isSharedAgent) {
-        // This is a shared agent - track cost for the share
-        await agentSharingService.trackSharedCost(agentId, userId, cost.totalCost);
-        
-        // Update trace session with cost payer (always the owner)
-        await prisma.traceSession.update({
-          where: { id: result.traceSessionId },
-          data: { costPaidBy: ownerId },
-        });
+        try {
+          console.log('[COST_ATTRIBUTION] Processing shared agent usage...');
+          
+          // This is a shared agent - track cost for the share
+          await agentSharingService.trackSharedCost(agentId, userId, cost.totalCost);
+          console.log('[COST_ATTRIBUTION] trackSharedCost completed');
+          
+          // Update trace session with cost payer (always the owner)
+          const updateResult = await prisma.traceSession.update({
+            where: { id: result.traceSessionId },
+            data: { costPaidBy: ownerId },
+          });
+          
+          console.log('[COST_ATTRIBUTION] Successfully updated costPaidBy', {
+            traceSessionId: result.traceSessionId,
+            costPaidBy: updateResult.costPaidBy,
+            ownerId,
+          });
 
-        // Notify owner that their agent was used
-        const currentUser = await prisma.user.findUnique({
-          where: { id: userId },
-          select: {
-            email: true,
-            employee: { select: { firstName: true, lastName: true } },
-          },
-        });
+          // Notify owner that their agent was used
+          const currentUser = await prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+              email: true,
+              employee: { select: { firstName: true, lastName: true } },
+            },
+          });
 
-        const userName = currentUser?.employee
-          ? `${currentUser.employee.firstName} ${currentUser.employee.lastName}`
-          : currentUser?.email || 'Unknown User';
+          const userName = currentUser?.employee
+            ? `${currentUser.employee.firstName} ${currentUser.employee.lastName}`
+            : currentUser?.email || 'Unknown User';
 
-        await agentSharingNotificationService.notifySharedAgentUsed({
-          ownerUserId: ownerId,
-          userName,
-          agentName: result.agentName,
-          cost: cost.totalCost,
-        });
+          await agentSharingNotificationService.notifySharedAgentUsed({
+            ownerUserId: ownerId,
+            userName,
+            agentName: result.agentName,
+            cost: cost.totalCost,
+          });
+          
+          console.log('[COST_ATTRIBUTION] Notification sent to owner');
+        } catch (error) {
+          console.error('[COST_ATTRIBUTION] ERROR during cost attribution:', error);
+          // Don't throw - we don't want to fail the request if cost attribution fails
+          // But log it so we can investigate
+        }
+      } else {
+        console.log('[COST_ATTRIBUTION] Not a shared agent, skipping cost attribution');
       }
 
       // Track agent context usage

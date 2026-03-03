@@ -869,7 +869,9 @@ model AgentShare {
   sharedWithUser     User             @relation("ShareReceiver", fields: [sharedWithUserId], references: [id], onDelete: Cascade)
   conversation       Conversation?    @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
-  @@unique([agentId, sharedWithUserId, status])
+  // Removed: @@unique([agentId, sharedWithUserId, status])
+  // Replaced with partial unique index (see migration for implementation)
+  // Only ACTIVE shares need uniqueness constraint - revoked shares can have duplicates
   @@index([agentId])
   @@index([ownerId])
   @@index([sharedWithUserId])
