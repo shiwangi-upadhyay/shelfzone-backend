@@ -97,8 +97,20 @@ export async function handleSendMessage(
 
     // Ensure we have a valid conversationId
     let actualConversationId = conversationId;
-    if (!actualConversationId) {
-      // Create a new conversation for this agent/user
+    
+    // If conversationId is provided, verify it exists
+    if (actualConversationId) {
+      const existingConversation = await prisma.conversation.findUnique({
+        where: { id: actualConversationId }
+      });
+      
+      // If conversation doesn't exist, create a new one
+      if (!existingConversation) {
+        const { conversation } = await createConversation(userId, agentId, `Conversation with ${agent.name}`);
+        actualConversationId = conversation.id;
+      }
+    } else {
+      // No conversationId provided, create a new one
       const { conversation } = await createConversation(userId, agentId, `Conversation with ${agent.name}`);
       actualConversationId = conversation.id;
     }
