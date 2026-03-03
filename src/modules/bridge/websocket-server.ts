@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Server } from 'http';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
+import BridgeEventEmitter from './event-emitter.js';
 
 // Message types
 interface NodeMessage {
@@ -241,6 +242,45 @@ async function handleHandshake(
 
     logger.info(`✅ Node created/updated: ${node.id}`);
 
+    // Register agents on this node
+    for (const agentName of agents) {
+      try {
+        // Check if agent exists in registry
+        const agent = await prisma.agentRegistry.findFirst({
+          where: {
+            createdBy: userId,
+            name: agentName
+          }
+        });
+
+        if (agent) {
+          // Update existing agent with nodeId
+          await prisma.agentRegistry.update({
+            where: { id: agent.id },
+            data: { nodeId: node.id }
+          });
+          logger.info(`✅ Updated agent ${agentName} with nodeId ${node.id}`);
+        } else {
+          // Create new agent entry
+          await prisma.agentRegistry.create({
+            data: {
+              name: agentName,
+              slug: `${agentName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`,
+              description: `Remote agent running on ${node.name}`,
+              model: 'remote',
+              type: 'INTEGRATION',
+              status: 'ACTIVE',
+              nodeId: node.id,
+              createdBy: userId
+            }
+          });
+          logger.info(`✅ Created new agent ${agentName} on nodeId ${node.id}`);
+        }
+      } catch (agentError) {
+        logger.error(`❌ Error registering agent ${agentName}:`, agentError);
+      }
+    }
+
     // Store in active connections
     const connectedNode: ConnectedNode = {
       nodeId: node.id,
@@ -288,7 +328,7 @@ async function handleResult(nodeId: string, sessionId: string, content: string, 
   
   try {
     // Store event in database
-    await prisma.bridgeEvent.create({
+    const event = await prisma.bridgeEvent.create({
       data: {
         bridgeSessionId: sessionId,
         type: 'RESPONSE',
@@ -296,6 +336,9 @@ async function handleResult(nodeId: string, sessionId: string, content: string, 
         metadata: { done }
       }
     });
+
+    // Emit to SSE stream
+    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
 
     // If done, update session status
     if (done) {
@@ -320,7 +363,7 @@ async function handleFileChange(nodeId: string, sessionId: string, filePath: str
   logger.debug(`📝 File change from node ${nodeId}, session ${sessionId}: ${filePath}`);
   
   try {
-    await prisma.bridgeEvent.create({
+    const event = await prisma.bridgeEvent.create({
       data: {
         bridgeSessionId: sessionId,
         type: 'FILE_CHANGE',
@@ -328,6 +371,9 @@ async function handleFileChange(nodeId: string, sessionId: string, filePath: str
         metadata: { diff }
       }
     });
+
+    // Emit to SSE stream
+    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
   } catch (error) {
     logger.error('❌ Error handling file change:', error);
   }
@@ -340,13 +386,16 @@ async function handleCommandOutput(nodeId: string, sessionId: string, output: st
   logger.debug(`💻 Command output from node ${nodeId}, session ${sessionId}`);
   
   try {
-    await prisma.bridgeEvent.create({
+    const event = await prisma.bridgeEvent.create({
       data: {
         bridgeSessionId: sessionId,
         type: 'COMMAND',
         content: output
       }
     });
+
+    // Emit to SSE stream
+    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
   } catch (error) {
     logger.error('❌ Error handling command output:', error);
   }
@@ -359,13 +408,16 @@ async function handleError(nodeId: string, sessionId: string, error: string) {
   logger.error(`❌ Error from node ${nodeId}, session ${sessionId}: ${error}`);
   
   try {
-    await prisma.bridgeEvent.create({
+    const event = await prisma.bridgeEvent.create({
       data: {
         bridgeSessionId: sessionId,
         type: 'ERROR',
         content: error
       }
     });
+
+    // Emit to SSE stream
+    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
 
     await prisma.bridgeSession.update({
       where: { id: sessionId },

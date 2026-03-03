@@ -363,6 +363,7 @@ model AgentRegistry {
   createdAt           DateTime          @default(now()) @map("created_at")
   updatedAt           DateTime          @updatedAt @map("updated_at")
   parentAgentId       String?           @map("parent_agent_id")
+  nodeId              String?           @map("node_id")
   apiKeys             AgentApiKey[]
   budgets             AgentBudget[]
   configLogs          AgentConfigLog[]
@@ -373,6 +374,7 @@ model AgentRegistry {
   childAgents         AgentRegistry[]   @relation("AgentHierarchy")
   team                AgentTeam?        @relation("TeamAgents", fields: [teamId], references: [id])
   updater             User?             @relation("AgentUpdater", fields: [updatedBy], references: [id])
+  node                Node?             @relation(fields: [nodeId], references: [id], onDelete: SetNull)
   agentRequests       AgentRequest[]    @relation("AgentRequests")
   sessions            AgentSession[]
   leadOfTeams         AgentTeam[]       @relation("TeamLead")
@@ -947,6 +949,7 @@ model Node {
 
   user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   bridgeSessions BridgeSession[]
+  agentRegistry AgentRegistry[]
 
   @@map("nodes")
 }

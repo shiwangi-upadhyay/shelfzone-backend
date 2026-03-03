@@ -6,6 +6,7 @@ import { agentSharingService } from '../agent-sharing/agent-sharing.service.js';
 import { agentSharingNotificationService } from '../agent-sharing/notification-hooks.service.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
+import { relayToRemoteNode } from '../bridge/instruction-relay.service.js';
 
 const agentContextService = new AgentContextService(prisma);
 
@@ -35,6 +36,34 @@ export async function handleSendMessage(
       });
     }
 
+    // Check if this agent runs on a remote node
+    const agent = await prisma.agentRegistry.findUnique({
+      where: { id: agentId },
+      include: {
+        node: true
+      }
+    });
+
+    if (!agent) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: 'Agent not found'
+      });
+    }
+
+    // If agent is on a remote node, relay instruction
+    if (agent.nodeId && agent.node) {
+      return await relayToRemoteNode({
+        agentId,
+        nodeId: agent.nodeId as string, // Type assertion - we've checked it's not null
+        instruction: message,
+        userId,
+        conversationId,
+        reply
+      });
+    }
+
+    // Otherwise, continue with existing Anthropic API flow
     const result = await streamMessage(userId, agentId, conversationId, message, attachments);
 
     // Set SSE headers with CORS
