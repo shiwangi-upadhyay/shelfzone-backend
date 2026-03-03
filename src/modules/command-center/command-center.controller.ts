@@ -3,6 +3,7 @@ import { sendMessageSchema, SendMessageInput } from './command-center.schemas.js
 import { streamMessage, calculateCost } from './command-center.service.js';
 import { AgentContextService } from './agent-context.service.js';
 import { agentSharingService } from '../agent-sharing/agent-sharing.service.js';
+import { agentSharingNotificationService } from '../agent-sharing/notification-hooks.service.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 
@@ -141,9 +142,38 @@ export async function handleSendMessage(
         select: { createdBy: true },
       });
 
-      if (agent && agent.createdBy !== userId) {
+      const ownerId = agent?.createdBy || userId;
+      const isSharedAgent = agent && agent.createdBy !== userId;
+
+      if (isSharedAgent) {
         // This is a shared agent - track cost for the share
         await agentSharingService.trackSharedCost(agentId, userId, cost.totalCost);
+        
+        // Update trace session with cost payer (always the owner)
+        await prisma.traceSession.update({
+          where: { id: result.traceSessionId },
+          data: { costPaidBy: ownerId },
+        });
+
+        // Notify owner that their agent was used
+        const currentUser = await prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            email: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+        });
+
+        const userName = currentUser?.employee
+          ? `${currentUser.employee.firstName} ${currentUser.employee.lastName}`
+          : currentUser?.email || 'Unknown User';
+
+        await agentSharingNotificationService.notifySharedAgentUsed({
+          ownerUserId: ownerId,
+          userName,
+          agentName: result.agentName,
+          cost: cost.totalCost,
+        });
       }
 
       // Track agent context usage

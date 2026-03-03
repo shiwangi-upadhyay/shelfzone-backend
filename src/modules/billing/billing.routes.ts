@@ -7,6 +7,7 @@ import {
   byModelHandler,
   invoicesHandler,
   exportHandler,
+  sharedUsageHandler,
 } from './billing.controller.js';
 import { ingestHandler } from './ingest.controller.js';
 
@@ -52,5 +53,11 @@ export default async function billingRoutes(app: FastifyInstance) {
     '/api/billing/export',
     { preHandler: [authenticate] },
     exportHandler,
+  );
+
+  app.get(
+    '/api/billing/shared-usage',
+    { preHandler: [authenticate] },
+    sharedUsageHandler,
   );
 }

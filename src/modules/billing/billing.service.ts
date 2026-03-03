@@ -229,3 +229,56 @@ export async function getExportCsv(from?: string, to?: string) {
 
   return [header, ...csvRows].join('\n');
 }
+
+/**
+ * Get shared agent usage details
+ * Shows: "Shiwangi used FrontendBot — $0.45 (Prabal's budget)"
+ */
+export async function getSharedUsage(from?: string, to?: string) {
+  const dateFilter = buildDateFilter(from, to);
+
+  const rows = await prisma.$queryRaw<Array<{
+    user_id: string;
+    user_name: string;
+    agent_id: string;
+    agent_name: string;
+    owner_id: string;
+    owner_name: string;
+    total_cost: number;
+    session_count: number;
+  }>>`
+    SELECT
+      tt.owner_id as user_id,
+      COALESCE(e.first_name || ' ' || e.last_name, u.email) as user_name,
+      ts.agent_id,
+      ar.name as agent_name,
+      ts.cost_paid_by as owner_id,
+      COALESCE(e2.first_name || ' ' || e2.last_name, u2.email) as owner_name,
+      COALESCE(SUM(ts.cost), 0)::float as total_cost,
+      COUNT(*)::int as session_count
+    FROM trace_sessions ts
+    JOIN task_traces tt ON tt.id = ts.task_trace_id
+    JOIN agent_registry ar ON ar.id = ts.agent_id
+    JOIN users u ON u.id = tt.owner_id
+    LEFT JOIN employees e ON e.user_id = u.id
+    JOIN users u2 ON u2.id = ts.cost_paid_by
+    LEFT JOIN employees e2 ON e2.user_id = u2.id
+    WHERE ts.cost_paid_by IS NOT NULL
+      AND ts.cost_paid_by != tt.owner_id
+      ${dateFilter ? Prisma.sql`AND ts.started_at >= ${new Date(from!)} AND ts.started_at <= ${new Date(to + 'T23:59:59.999Z')}` : Prisma.empty}
+    GROUP BY tt.owner_id, e.first_name, e.last_name, u.email, ts.agent_id, ar.name, ts.cost_paid_by, e2.first_name, e2.last_name, u2.email
+    ORDER BY total_cost DESC
+  `;
+
+  return rows.map(r => ({
+    userId: r.user_id,
+    userName: r.user_name,
+    agentId: r.agent_id,
+    agentName: r.agent_name,
+    ownerId: r.owner_id,
+    ownerName: r.owner_name,
+    totalCost: Number(r.total_cost),
+    sessionCount: Number(r.session_count),
+    displayText: `${r.user_name} used ${r.agent_name} — $${Number(r.total_cost).toFixed(2)} (${r.owner_name}'s budget)`,
+  }));
+}

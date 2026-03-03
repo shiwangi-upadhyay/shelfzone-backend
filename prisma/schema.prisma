@@ -590,6 +590,7 @@ model TraceSession {
   modelUsed       String?        @map("model_used") @db.VarChar
   sessionType     String         @default("command-center") @map("session_type") @db.VarChar
   durationMs      Int?           @map("duration_ms")
+  costPaidBy      String?        @map("cost_paid_by")
   events          SessionEvent[]
   agent           AgentRegistry  @relation("TraceSessionAgent", fields: [agentId], references: [id])
   delegator       AgentRegistry? @relation("TraceSessionDelegator", fields: [delegatedBy], references: [id])
