@@ -290,14 +290,56 @@ export async function getAgentDetail(idOrSlug: string) {
 
   // Enrich config logs with changer data
   const enrichedConfigLogs = agent.configLogs.map(log => ({
-    ...log,
+    id: log.id,
+    agentId: log.agentId,
+    changedBy: log.changedBy,
+    changeType: log.changeType,
+    previousValue: log.previousValue,
+    newValue: log.newValue,
+    reason: log.reason,
+    createdAt: log.createdAt,
     changer: log.changedBy ? changerMap.get(log.changedBy) || null : null,
   }));
 
+  // Safely decrypt system prompt
+  let decryptedSystemPrompt = null;
+  try {
+    if (agent.systemPrompt && typeof agent.systemPrompt === 'string' && agent.systemPrompt.length > 0) {
+      decryptedSystemPrompt = decrypt(agent.systemPrompt);
+    }
+  } catch (error) {
+    console.error('Failed to decrypt system prompt:', error);
+    decryptedSystemPrompt = null;
+  }
+
   return {
-    ...agent,
+    id: agent.id,
+    name: agent.name,
+    slug: agent.slug,
+    description: agent.description,
+    type: agent.type,
+    status: agent.status,
+    model: agent.model,
+    systemPrompt: decryptedSystemPrompt,
+    systemPromptVersion: agent.systemPromptVersion,
+    temperature: agent.temperature,
+    maxTokens: agent.maxTokens,
+    timeoutMs: agent.timeoutMs,
+    capabilities: agent.capabilities,
+    tools: agent.tools,
+    metadata: agent.metadata,
+    teamId: agent.teamId,
+    team: agent.team,
+    isCritical: agent.isCritical,
+    createdBy: agent.createdBy,
+    updatedBy: agent.updatedBy,
+    lastHealthCheck: agent.lastHealthCheck,
+    lastHealthStatus: agent.lastHealthStatus,
+    createdAt: agent.createdAt,
+    updatedAt: agent.updatedAt,
+    parentAgentId: agent.parentAgentId,
+    nodeId: agent.nodeId,
     configLogs: enrichedConfigLogs,
-    systemPrompt: agent.systemPrompt ? decrypt(agent.systemPrompt) : null,
   };
 }
 
