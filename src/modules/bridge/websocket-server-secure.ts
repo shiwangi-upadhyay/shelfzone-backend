@@ -58,7 +58,8 @@ const HEARTBEAT_TIMEOUT = 60000;
 export function initializeSecureBridgeWebSocket(server: Server): WebSocketServer {
   const wss = new WebSocketServer({ 
     server,
-    path: '/ws/bridge/secure'
+    path: '/ws/bridge/secure',
+    perMessageDeflate: false // Disable compression to prevent RSV1 errors
   });
 
   logger.info('🔒 Secure Agent Bridge WebSocket server initialized on /ws/bridge/secure');

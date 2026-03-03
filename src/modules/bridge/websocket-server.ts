@@ -113,7 +113,8 @@ const HEARTBEAT_TIMEOUT = 60000;
 export function initializeBridgeWebSocket(server: Server): WebSocketServer {
   const wss = new WebSocketServer({ 
     server,
-    path: '/ws/bridge'
+    path: '/ws/bridge',
+    perMessageDeflate: false // Disable compression to prevent RSV1 errors
   });
 
   logger.info('🌉 Agent Bridge WebSocket server initialized on /ws/bridge (OpenClaw Protocol v3)');
