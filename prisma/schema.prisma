@@ -932,17 +932,43 @@ enum BridgeEventType {
   SYSTEM
 }
 
+enum PairingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model DevicePairing {
+  id          String        @id @default(cuid())
+  deviceId    String        @unique @map("device_id")
+  publicKey   String        @map("public_key")
+  role        String
+  scopes      Json          @default("[]")
+  status      PairingStatus @default(PENDING)
+  approvedBy  String?       @map("approved_by")
+  approvedAt  DateTime?     @map("approved_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  
+  @@index([deviceId])
+  @@index([status])
+  @@map("device_pairings")
+}
+
 model Node {
   id            String          @id @default(cuid())
   userId        String          @map("user_id")
   name          String
   nodeKey       String          @unique @map("node_key")
+  deviceId      String?         @unique @map("device_id")
   status        NodeStatus      @default(OFFLINE)
   lastSeenAt    DateTime?       @map("last_seen_at")
   ipAddress     String?         @map("ip_address")
   platform      String?
   connectedAt   DateTime?       @map("connected_at")
   agents        Json?
+  capabilities  Json?
+  commands      Json?
+  permissions   Json?
   metadata      Json?
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
