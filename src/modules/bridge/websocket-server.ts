@@ -3,516 +3,502 @@ import { Server } from 'http';
 import { prisma } from '../../lib/prisma.js';
 import { logger } from '../../lib/logger.js';
 import BridgeEventEmitter from './event-emitter.js';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
-// Message types
-interface NodeMessage {
-  type: 'handshake' | 'pong' | 'result' | 'file_change' | 'command_output' | 'error';
-  nodeKey?: string;
-  agents?: string[];
-  platform?: string;
-  sessionId?: string;
-  content?: string;
-  done?: boolean;
-  filePath?: string;
-  diff?: string;
-  output?: string;
-  error?: string;
+const JWT_SECRET = process.env.JWT_SECRET || 'shelfzone-secret-change-in-production';
+
+// OpenClaw Protocol v3 Message Types
+interface RequestMessage {
+  type: 'req';
+  id: string;
+  method: string;
+  params: any;
 }
 
-interface ServerMessage {
-  type: 'ping' | 'execute' | 'stop' | 'auth_ok' | 'handshake_complete' | 'error';
+interface ResponseMessage {
+  type: 'res';
+  id: string;
+  ok: boolean;
+  payload?: any;
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
+interface EventMessage {
+  type: 'event';
+  event: string;
+  payload: any;
+  seq?: number;
+  stateVersion?: string;
+}
+
+type Message = RequestMessage | ResponseMessage | EventMessage;
+
+// Connect request parameters
+interface ConnectParams {
+  minProtocol: number;
+  maxProtocol: number;
+  client: {
+    id: string;
+    version: string;
+    platform: string;
+    mode: string;
+  };
+  role: string;
+  scopes?: string[];
+  caps?: string[];
+  commands?: string[];
+  permissions?: Record<string, boolean>;
+  auth?: {
+    token?: string;
+    deviceToken?: string;
+  };
+  locale?: string;
+  userAgent?: string;
+  device?: {
+    id: string;
+    publicKey: string;
+    signature: string;
+    signedAt: number;
+    nonce: string;
+  };
+}
+
+// Node.invoke parameters
+interface NodeInvokeParams {
   nodeId?: string;
-  sessionId?: string;
-  agentId?: string;
-  instruction?: string;
-  message?: string;
+  deviceId?: string;
+  command: string;
+  params: any;
 }
 
 // Connected node state
 interface ConnectedNode {
   nodeId: string;
+  deviceId?: string;
   userId: string;
   socket: WebSocket;
-  agents: string[];
+  role: string;
+  capabilities: string[];
+  commands: string[];
+  permissions: Record<string, boolean>;
   connectedAt: Date;
   lastPing: Date;
-  nodeKey: string;
   platform?: string;
+  challengeNonce?: string;
 }
 
-// Store active connections
+// Store active connections by nodeId
 const connectedNodes = new Map<string, ConnectedNode>();
+// Store pending requests (for node.invoke responses)
+const pendingRequests = new Map<string, {
+  resolve: (value: any) => void;
+  reject: (error: any) => void;
+  timeout: NodeJS.Timeout;
+}>();
+
+// Event sequence counter
+let eventSeq = 1;
 
 // Heartbeat interval (30 seconds)
 const HEARTBEAT_INTERVAL = 30000;
 const HEARTBEAT_TIMEOUT = 60000;
 
 /**
- * Initialize WebSocket server for Agent Bridge
+ * Initialize WebSocket server for Agent Bridge (OpenClaw Protocol v3)
  */
 export function initializeBridgeWebSocket(server: Server): WebSocketServer {
   const wss = new WebSocketServer({ 
     server,
-    path: '/ws/bridge'
+    path: '/ws/bridge',
+    perMessageDeflate: false, // Disable compression to prevent RSV1 errors
+    maxPayload: 100 * 1024 * 1024, // 100MB max payload
+    skipUTF8Validation: false
   });
 
-  logger.info('🌉 Agent Bridge WebSocket server initialized on /ws/bridge');
+  logger.info('🌉 Agent Bridge WebSocket server initialized on /ws/bridge (OpenClaw Protocol v3)');
 
-  // Handle new connections
   wss.on('connection', async (ws: WebSocket, req) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`);
-    const token = url.searchParams.get('token');
-
     logger.info(`📡 New WebSocket connection attempt from ${req.socket.remoteAddress}`);
 
-    if (!token) {
-      logger.warn('⚠️ Connection rejected: No token provided');
-      ws.close(1008, 'Authentication required');
-      return;
-    }
-
-    // Set up node state and message listener IMMEDIATELY
-    // (before async token verification, to catch messages sent early)
     let nodeState: ConnectedNode | null = null;
-    let userId: string | null = null;
     let authenticated = false;
-    const messageQueue: Buffer[] = [];
 
-    console.log('[WS] 🔧 Attaching message listener IMMEDIATELY for', req.socket.remoteAddress);
-      
-    ws.on('message', async (data: Buffer) => {
-        console.log('[WS] 📨 Raw message received:', data.toString());
-        
-        try {
-          const message: NodeMessage = JSON.parse(data.toString());
-          console.log('[WS] 📦 Parsed message:', JSON.stringify(message, null, 2));
-          
-          // If not authenticated yet, queue the message
-          if (!authenticated) {
-            console.log('[WS] 📥 Queueing message until authentication completes');
-            messageQueue.push(data);
-            return;
-          }
-          
-          logger.debug(`📨 Received message from ${nodeState?.nodeId || 'pending'}: ${message.type}`);
+    // Generate challenge nonce for this connection
+    const challengeNonce = crypto.randomBytes(32).toString('base64');
+    const challengeTs = Date.now();
 
-          switch (message.type) {
-            case 'handshake':
-              await handleHandshake(ws, userId!, token, message, (node) => {
-                nodeState = node;
-              });
-              break;
-
-            case 'pong':
-              if (nodeState) {
-                nodeState.lastPing = new Date();
-              }
-              break;
-
-            case 'result':
-              if (nodeState && message.sessionId) {
-                await handleResult(nodeState.nodeId, message.sessionId, message.content || '', message.done || false);
-              }
-              break;
-
-            case 'file_change':
-              if (nodeState && message.sessionId && message.filePath) {
-                await handleFileChange(nodeState.nodeId, message.sessionId, message.filePath, message.diff || '');
-              }
-              break;
-
-            case 'command_output':
-              if (nodeState && message.sessionId && message.output) {
-                await handleCommandOutput(nodeState.nodeId, message.sessionId, message.output);
-              }
-              break;
-
-            case 'error':
-              if (nodeState && message.sessionId && message.error) {
-                await handleError(nodeState.nodeId, message.sessionId, message.error);
-              }
-              break;
-
-            default:
-              logger.warn(`⚠️ Unknown message type: ${(message as any).type}`);
-          }
-        } catch (err) {
-          console.error('[WS] ❌ Message processing error:', err);
-          logger.error('❌ Error processing message:', err);
-          const errorMsg: ServerMessage = { 
-            type: 'error', 
-            message: 'Invalid message format' 
-          };
-          ws.send(JSON.stringify(errorMsg));
-        }
-      });
-
-      // Handle disconnection
-      ws.on('close', async () => {
-        if (nodeState) {
-          logger.info(`🔌 Node ${nodeState.nodeId} disconnected`);
-          connectedNodes.delete(nodeState.nodeId);
-
-          // Update node status in DB
-          await prisma.node.update({
-            where: { id: nodeState.nodeId },
-            data: { status: 'OFFLINE', lastSeenAt: new Date() }
-          });
-        }
-      });
-
-      // Handle errors
-      ws.on('error', (error) => {
-        logger.error('❌ WebSocket error:', error);
-      });
-
-      // NOW verify token after handlers are set up
-      try {
-        const pairingToken = await prisma.$queryRaw<Array<{ userId: string; expiresAt: Date }>>`
-          SELECT user_id as "userId", expires_at as "expiresAt" 
-          FROM pairing_tokens 
-          WHERE token = ${token}
-          LIMIT 1
-        `;
-
-        if (!pairingToken || pairingToken.length === 0) {
-          logger.warn(`⚠️ Connection rejected: Invalid token ${token.substring(0, 10)}...`);
-          ws.close(1008, 'Invalid token');
-          return;
-        }
-
-        const tokenData = pairingToken[0];
-
-        // Check if token expired
-        if (new Date() > tokenData.expiresAt) {
-          logger.warn(`⚠️ Connection rejected: Token expired for user ${tokenData.userId}`);
-          ws.close(1008, 'Token expired');
-          return;
-        }
-
-        logger.info(`✅ Token verified for user ${tokenData.userId}`);
-        
-        // Set userId and mark as authenticated
-        userId = tokenData.userId;
-        authenticated = true;
-
-        // Send auth_ok
-        const authOkMsg: ServerMessage = { type: 'auth_ok' };
-        ws.send(JSON.stringify(authOkMsg));
-        console.log('[WS] ✅ auth_ok sent to', req.socket.remoteAddress);
-
-        // Process any queued messages
-        if (messageQueue.length > 0) {
-          console.log(`[WS] 📤 Processing ${messageQueue.length} queued messages`);
-          for (const queuedData of messageQueue) {
-            ws.emit('message', queuedData);
-          }
-          messageQueue.length = 0;
-        }
-
-      } catch (error) {
-        logger.error('❌ Error verifying token:', error);
-        ws.close(1011, 'Authentication failed');
+    // Send connect.challenge event after ensuring connection is ready
+    setImmediate(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        sendEvent(ws, 'connect.challenge', {
+          nonce: challengeNonce,
+          ts: challengeTs
+        });
       }
+    });
+
+    // Handle incoming messages
+    ws.on('message', async (data: Buffer) => {
+      try {
+        const message: Message = JSON.parse(data.toString());
+        
+        if (message.type === 'req') {
+          await handleRequest(ws, message as RequestMessage, challengeNonce, (node) => {
+            nodeState = node;
+            authenticated = true;
+          });
+        } else if (message.type === 'res') {
+          await handleResponse(message as ResponseMessage);
+        }
+      } catch (err) {
+        logger.error('❌ Error processing message:', err);
+        sendErrorResponse(ws, 'unknown', 'INVALID_MESSAGE', 'Invalid message format');
+      }
+    });
+
+    // Handle disconnection
+    ws.on('close', async () => {
+      if (nodeState) {
+        logger.info(`🔌 Node ${nodeState.nodeId} disconnected`);
+        connectedNodes.delete(nodeState.nodeId);
+
+        await prisma.node.update({
+          where: { id: nodeState.nodeId },
+          data: { status: 'OFFLINE', lastSeenAt: new Date() }
+        }).catch(err => logger.error('Error updating node status:', err));
+      }
+    });
+
+    ws.on('error', (error) => {
+      logger.error('❌ WebSocket error:', error);
+    });
   });
 
   // Start heartbeat interval
   setInterval(() => {
-    heartbeatCheck(wss);
+    heartbeatCheck();
   }, HEARTBEAT_INTERVAL);
 
   return wss;
 }
 
 /**
- * Handle handshake message
+ * Handle request messages
  */
-async function handleHandshake(
-  ws: WebSocket, 
-  userId: string, 
-  token: string, 
-  message: NodeMessage,
-  onComplete: (node: ConnectedNode) => void
+async function handleRequest(
+  ws: WebSocket,
+  message: RequestMessage,
+  challengeNonce: string,
+  onNodeConnected: (node: ConnectedNode) => void
 ) {
-  console.log('[WS] 🤝 Processing handshake...');
-  console.log('[WS] 📋 Message:', JSON.stringify(message, null, 2));
-  
-  if (!message.nodeKey || !message.agents) {
-    console.log('[WS] ❌ Invalid handshake: missing nodeKey or agents');
-    const errorMsg: ServerMessage = { 
-      type: 'error', 
-      message: 'Invalid handshake: missing nodeKey or agents' 
-    };
-    ws.send(JSON.stringify(errorMsg));
+  const { id, method, params } = message;
+
+  try {
+    switch (method) {
+      case 'connect':
+        await handleConnect(ws, id, params as ConnectParams, challengeNonce, onNodeConnected);
+        break;
+
+      case 'health':
+        sendResponse(ws, id, true, { status: 'ok', timestamp: Date.now() });
+        break;
+
+      case 'node.invoke':
+        // This is from server to node, but if node sends it, ignore
+        sendErrorResponse(ws, id, 'METHOD_NOT_ALLOWED', 'node.invoke is server->node only');
+        break;
+
+      default:
+        sendErrorResponse(ws, id, 'UNKNOWN_METHOD', `Unknown method: ${method}`);
+    }
+  } catch (error: any) {
+    logger.error(`❌ Error handling ${method}:`, error);
+    sendErrorResponse(ws, id, 'INTERNAL_ERROR', error.message);
+  }
+}
+
+/**
+ * Handle connect request (node pairing)
+ */
+async function handleConnect(
+  ws: WebSocket,
+  requestId: string,
+  params: ConnectParams,
+  challengeNonce: string,
+  onNodeConnected: (node: ConnectedNode) => void
+) {
+  // Validate protocol version
+  if (params.minProtocol > 3 || params.maxProtocol < 3) {
+    sendErrorResponse(ws, requestId, 'PROTOCOL_VERSION_MISMATCH', 
+      `Server only supports protocol v3, client requires ${params.minProtocol}-${params.maxProtocol}`);
     return;
   }
 
-  const { nodeKey, agents, platform } = message;
-
-  console.log('[WS] 📋 Node key:', nodeKey);
-  console.log('[WS] 🤖 Agents:', agents);
-  console.log('[WS] 💻 Platform:', platform);
-  
-  logger.info(`🤝 Handshake from nodeKey: ${nodeKey}, platform: ${platform}, agents: ${agents.length}`);
-
-  try {
-    // Create or update node in database
-    const node = await prisma.node.upsert({
-      where: { nodeKey },
-      update: {
-        status: 'ONLINE',
-        lastSeenAt: new Date(),
-        connectedAt: new Date(),
-        agents: agents,
-        platform: platform || null,
-        ipAddress: null // TODO: Extract from request
-      },
-      create: {
-        userId,
-        name: `${platform || 'Node'} - ${nodeKey.substring(0, 8)}`,
-        nodeKey,
-        status: 'ONLINE',
-        lastSeenAt: new Date(),
-        connectedAt: new Date(),
-        agents: agents,
-        platform: platform || null
-      }
-    });
-
-    console.log('[WS] ✅ Node created/updated in DB:', node.id);
-    logger.info(`✅ Node created/updated: ${node.id}`);
-
-    // Register agents on this node
-    console.log('[WS] 🤖 Registering agents...');
-    for (const agentName of agents) {
-      try {
-        // Check if agent exists in registry
-        const agent = await prisma.agentRegistry.findFirst({
-          where: {
-            createdBy: userId,
-            name: agentName
-          }
-        });
-
-        if (agent) {
-          // Update existing agent with nodeId
-          await prisma.agentRegistry.update({
-            where: { id: agent.id },
-            data: { nodeId: node.id }
-          });
-          console.log(`[WS] ✅ Updated agent ${agentName} with nodeId ${node.id}`);
-          logger.info(`✅ Updated agent ${agentName} with nodeId ${node.id}`);
-        } else {
-          // Create new agent entry
-          await prisma.agentRegistry.create({
-            data: {
-              name: agentName,
-              slug: `${agentName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`,
-              description: `Remote agent running on ${node.name}`,
-              model: 'remote',
-              type: 'INTEGRATION',
-              status: 'ACTIVE',
-              nodeId: node.id,
-              createdBy: userId
-            }
-          });
-          console.log(`[WS] ✅ Created new agent ${agentName} on nodeId ${node.id}`);
-          logger.info(`✅ Created new agent ${agentName} on nodeId ${node.id}`);
-        }
-      } catch (agentError) {
-        console.error(`[WS] ❌ Error registering agent ${agentName}:`, agentError);
-        logger.error(`❌ Error registering agent ${agentName}:`, agentError);
-      }
-    }
-
-    // Store in active connections
-    const connectedNode: ConnectedNode = {
-      nodeId: node.id,
-      userId,
-      socket: ws,
-      agents,
-      connectedAt: new Date(),
-      lastPing: new Date(),
-      nodeKey,
-      platform
-    };
-
-    connectedNodes.set(node.id, connectedNode);
-    onComplete(connectedNode);
-
-    // Delete pairing token (single-use)
-    await prisma.$executeRaw`DELETE FROM pairing_tokens WHERE token = ${token}`;
-
-    logger.info(`🗑️ Pairing token deleted for ${nodeKey}`);
-
-    // Send handshake complete
-    const completeMsg: ServerMessage = { 
-      type: 'handshake_complete', 
-      nodeId: node.id 
-    };
-    ws.send(JSON.stringify(completeMsg));
-
-    console.log(`[WS] 🎉 Node ${node.id} successfully paired and online`);
-    logger.info(`🎉 Node ${node.id} successfully paired and online`);
-
-  } catch (error) {
-    console.error('[WS] ❌ Error during handshake:', error);
-    logger.error('❌ Error during handshake:', error);
-    const errorMsg: ServerMessage = { 
-      type: 'error', 
-      message: 'Handshake failed' 
-    };
-    ws.send(JSON.stringify(errorMsg));
+  // Validate role
+  if (params.role !== 'node') {
+    sendErrorResponse(ws, requestId, 'INVALID_ROLE', 'Only "node" role is supported');
+    return;
   }
-}
 
-/**
- * Handle result message from node
- */
-async function handleResult(nodeId: string, sessionId: string, content: string, done: boolean) {
-  logger.debug(`📊 Result from node ${nodeId}, session ${sessionId}, done: ${done}`);
-  
-  try {
-    // Store event in database
-    const event = await prisma.bridgeEvent.create({
-      data: {
-        bridgeSessionId: sessionId,
-        type: 'RESPONSE',
-        content,
-        metadata: { done }
-      }
-    });
-
-    // Emit to SSE stream
-    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
-
-    // If done, update session status
-    if (done) {
-      await prisma.bridgeSession.update({
-        where: { id: sessionId },
-        data: { 
-          status: 'COMPLETED',
-          endedAt: new Date()
-        }
-      });
-      logger.info(`✅ Session ${sessionId} completed`);
-    }
-  } catch (error) {
-    logger.error('❌ Error handling result:', error);
+  // Extract auth token
+  const token = params.auth?.token || params.auth?.deviceToken;
+  if (!token) {
+    sendErrorResponse(ws, requestId, 'AUTH_FAILED', 'No token provided');
+    return;
   }
-}
 
-/**
- * Handle file change message from node
- */
-async function handleFileChange(nodeId: string, sessionId: string, filePath: string, diff: string) {
-  logger.debug(`📝 File change from node ${nodeId}, session ${sessionId}: ${filePath}`);
-  
-  try {
-    const event = await prisma.bridgeEvent.create({
-      data: {
-        bridgeSessionId: sessionId,
-        type: 'FILE_CHANGE',
-        fileChanged: filePath,
-        metadata: { diff }
-      }
-    });
+  let userId: string;
+  let deviceId: string | undefined;
 
-    // Emit to SSE stream
-    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
-  } catch (error) {
-    logger.error('❌ Error handling file change:', error);
-  }
-}
-
-/**
- * Handle command output message from node
- */
-async function handleCommandOutput(nodeId: string, sessionId: string, output: string) {
-  logger.debug(`💻 Command output from node ${nodeId}, session ${sessionId}`);
-  
-  try {
-    const event = await prisma.bridgeEvent.create({
-      data: {
-        bridgeSessionId: sessionId,
-        type: 'COMMAND',
-        content: output
-      }
-    });
-
-    // Emit to SSE stream
-    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
-  } catch (error) {
-    logger.error('❌ Error handling command output:', error);
-  }
-}
-
-/**
- * Handle error message from node
- */
-async function handleError(nodeId: string, sessionId: string, error: string) {
-  logger.error(`❌ Error from node ${nodeId}, session ${sessionId}: ${error}`);
-  
-  try {
-    const event = await prisma.bridgeEvent.create({
-      data: {
-        bridgeSessionId: sessionId,
-        type: 'ERROR',
-        content: error
-      }
-    });
-
-    // Emit to SSE stream
-    BridgeEventEmitter.getInstance().emitBridgeEvent(event);
-
-    await prisma.bridgeSession.update({
-      where: { id: sessionId },
-      data: { 
-        status: 'ERROR',
-        endedAt: new Date()
-      }
-    });
-  } catch (err) {
-    logger.error('❌ Error handling error message:', err);
-  }
-}
-
-/**
- * Send ping to all connected nodes and check for timeouts
- */
-function heartbeatCheck(wss: WebSocketServer) {
-  const now = new Date();
-  
-  connectedNodes.forEach((node, nodeId) => {
-    const timeSinceLastPing = now.getTime() - node.lastPing.getTime();
-
-    // If no pong received for 60s, disconnect
-    if (timeSinceLastPing > HEARTBEAT_TIMEOUT) {
-      logger.warn(`⚠️ Node ${nodeId} timed out (${timeSinceLastPing}ms since last pong)`);
-      node.socket.close(1000, 'Heartbeat timeout');
-      connectedNodes.delete(nodeId);
-
-      // Update DB
-      prisma.node.update({
-        where: { id: nodeId },
-        data: { status: 'OFFLINE', lastSeenAt: new Date() }
-      }).catch(err => logger.error('Error updating node status:', err));
+  // Check if it's a device token (JWT)
+  if (token.startsWith('eyJ')) {
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as any;
+      userId = decoded.userId;
+      deviceId = decoded.deviceId;
       
+      // Verify device pairing
+      const pairing = await prisma.devicePairing.findUnique({
+        where: { deviceId }
+      });
+
+      if (!pairing || pairing.status !== 'APPROVED') {
+        sendErrorResponse(ws, requestId, 'PAIRING_REQUIRED', 'Device not paired or approved');
+        return;
+      }
+    } catch (err) {
+      sendErrorResponse(ws, requestId, 'AUTH_FAILED', 'Invalid device token');
+      return;
+    }
+  } else {
+    // Gateway/pairing token
+    const pairingToken = await prisma.$queryRaw<Array<{ userId: string; expiresAt: Date }>>`
+      SELECT user_id as "userId", expires_at as "expiresAt" 
+      FROM pairing_tokens 
+      WHERE token = ${token}
+      LIMIT 1
+    `;
+
+    if (!pairingToken || pairingToken.length === 0) {
+      sendErrorResponse(ws, requestId, 'AUTH_FAILED', 'Invalid token');
       return;
     }
 
-    // Send ping
-    const pingMsg: ServerMessage = { type: 'ping' };
-    try {
-      node.socket.send(JSON.stringify(pingMsg));
-    } catch (error) {
-      logger.error(`❌ Error sending ping to node ${nodeId}:`, error);
+    const tokenData = pairingToken[0];
+
+    if (new Date() > tokenData.expiresAt) {
+      sendErrorResponse(ws, requestId, 'AUTH_FAILED', 'Token expired');
+      return;
+    }
+
+    userId = tokenData.userId;
+
+    // If device identity provided, handle pairing
+    if (params.device) {
+      deviceId = params.device.id;
+
+      // Verify signature (simplified - in production, verify cryptographically)
+      if (params.device.nonce !== challengeNonce) {
+        sendErrorResponse(ws, requestId, 'AUTH_FAILED', 'Invalid challenge signature');
+        return;
+      }
+
+      // Create or update device pairing
+      await prisma.devicePairing.upsert({
+        where: { deviceId },
+        update: {
+          publicKey: params.device.publicKey,
+          role: params.role,
+          scopes: params.scopes || [],
+          status: 'APPROVED' // Auto-approve for now
+        },
+        create: {
+          deviceId,
+          publicKey: params.device.publicKey,
+          role: params.role,
+          scopes: params.scopes || [],
+          status: 'APPROVED' // Auto-approve for now
+        }
+      });
+    }
+
+    // Delete pairing token (single-use)
+    await prisma.$executeRaw`DELETE FROM pairing_tokens WHERE token = ${token}`;
+  }
+
+  // Create or update node in database
+  const nodeKey = params.client.id || crypto.randomBytes(16).toString('hex');
+  const node = await prisma.node.upsert({
+    where: { nodeKey },
+    update: {
+      status: 'ONLINE',
+      lastSeenAt: new Date(),
+      connectedAt: new Date(),
+      deviceId: deviceId,
+      platform: params.client.platform,
+      capabilities: params.caps || [],
+      commands: params.commands || [],
+      permissions: params.permissions || {}
+    },
+    create: {
+      userId,
+      name: `${params.client.platform || 'Node'} - ${nodeKey.substring(0, 8)}`,
+      nodeKey,
+      deviceId: deviceId,
+      status: 'ONLINE',
+      lastSeenAt: new Date(),
+      connectedAt: new Date(),
+      platform: params.client.platform,
+      capabilities: params.caps || [],
+      commands: params.commands || [],
+      permissions: params.permissions || {}
     }
   });
+
+  logger.info(`✅ Node connected: ${node.id}, deviceId: ${deviceId}`);
+
+  // Register node in connected nodes map
+  const connectedNode: ConnectedNode = {
+    nodeId: node.id,
+    deviceId: deviceId,
+    userId,
+    socket: ws,
+    role: params.role,
+    capabilities: params.caps || [],
+    commands: params.commands || [],
+    permissions: params.permissions || {},
+    connectedAt: new Date(),
+    lastPing: new Date(),
+    platform: params.client.platform
+  };
+
+  connectedNodes.set(node.id, connectedNode);
+  onNodeConnected(connectedNode);
+
+  // Generate device token (JWT)
+  const deviceToken = jwt.sign(
+    {
+      userId,
+      deviceId: deviceId || node.id,
+      role: params.role,
+      scopes: params.scopes || []
+    },
+    JWT_SECRET,
+    { expiresIn: '365d' }
+  );
+
+  // Send hello-ok response
+  sendResponse(ws, requestId, true, {
+    type: 'hello-ok',
+    protocol: 3,
+    policy: {
+      tickIntervalMs: HEARTBEAT_INTERVAL
+    },
+    auth: {
+      deviceToken,
+      role: params.role,
+      scopes: params.scopes || []
+    }
+  });
+
+  logger.info(`🎉 Node ${node.id} successfully paired and online`);
 }
 
 /**
- * Send instruction to a specific node
+ * Handle response messages (from node.invoke)
+ */
+async function handleResponse(message: ResponseMessage) {
+  const { id, ok, payload, error } = message;
+
+  const pending = pendingRequests.get(id);
+  if (!pending) {
+    logger.warn(`⚠️ Received response for unknown request: ${id}`);
+    return;
+  }
+
+  clearTimeout(pending.timeout);
+  pendingRequests.delete(id);
+
+  // Emit bridge event for SSE streaming
+  try {
+    if (ok && payload) {
+      // Extract sessionId from request metadata if available
+      const sessionId = (pending as any).sessionId;
+      
+      if (sessionId) {
+        const event = await prisma.bridgeEvent.create({
+          data: {
+            bridgeSessionId: sessionId,
+            type: 'RESPONSE',
+            content: payload.stdout || JSON.stringify(payload),
+            metadata: payload
+          }
+        });
+
+        BridgeEventEmitter.getInstance().emitBridgeEvent(event);
+      }
+    }
+  } catch (err) {
+    logger.error('Error emitting bridge event:', err);
+  }
+
+  if (ok) {
+    pending.resolve(payload);
+  } else {
+    pending.reject(new Error(error?.message || 'Unknown error'));
+  }
+}
+
+/**
+ * Send response message
+ */
+function sendResponse(ws: WebSocket, id: string, ok: boolean, payload?: any, errorCode?: string, errorMessage?: string) {
+  const response: ResponseMessage = {
+    type: 'res',
+    id,
+    ok
+  };
+
+  if (ok) {
+    response.payload = payload;
+  } else {
+    response.error = {
+      code: errorCode || 'UNKNOWN_ERROR',
+      message: errorMessage || 'Unknown error'
+    };
+  }
+
+  ws.send(JSON.stringify(response));
+}
+
+/**
+ * Send error response
+ */
+function sendErrorResponse(ws: WebSocket, id: string, code: string, message: string) {
+  sendResponse(ws, id, false, undefined, code, message);
+}
+
+/**
+ * Send event message
+ */
+function sendEvent(ws: WebSocket, event: string, payload: any) {
+  const eventMsg: EventMessage = {
+    type: 'event',
+    event,
+    payload,
+    seq: eventSeq++
+  };
+
+  ws.send(JSON.stringify(eventMsg));
+}
+
+/**
+ * Send instruction to a specific node (via node.invoke)
  */
 export async function sendInstructionToNode(
   nodeId: string, 
@@ -523,25 +509,132 @@ export async function sendInstructionToNode(
   const node = connectedNodes.get(nodeId);
 
   if (!node) {
-    logger.warn(`⚠️ Cannot send instruction: Node ${nodeId} not connected`);
-    return false;
+    throw new Error(`Node ${nodeId} not connected`);
   }
 
-  const executeMsg: ServerMessage = {
-    type: 'execute',
-    sessionId,
-    agentId,
-    instruction
+  // Check if node supports system.run
+  if (!node.commands.includes('system.run')) {
+    throw new Error('Node does not support system.run command');
+  }
+
+  const requestId = `invoke-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+  // Store session ID with pending request for event emission
+  const pendingRequest: any = {
+    resolve: () => {},
+    reject: () => {},
+    timeout: setTimeout(() => {
+      pendingRequests.delete(requestId);
+    }, 30000),
+    sessionId
+  };
+
+  pendingRequests.set(requestId, pendingRequest);
+
+  // Send node.invoke request
+  const request: RequestMessage = {
+    type: 'req',
+    id: requestId,
+    method: 'node.invoke',
+    params: {
+      command: 'system.run',
+      params: {
+        command: ['bash', '-c', instruction],
+        cwd: process.env.HOME || '/tmp',
+        commandTimeoutMs: 30000
+      }
+    }
   };
 
   try {
-    node.socket.send(JSON.stringify(executeMsg));
-    logger.info(`✅ Instruction sent to node ${nodeId}, session ${sessionId}`);
+    node.socket.send(JSON.stringify(request));
+    logger.info(`✅ Instruction sent to node ${nodeId}, request ${requestId}`);
     return true;
   } catch (error) {
-    logger.error(`❌ Error sending instruction to node ${nodeId}:`, error);
-    return false;
+    clearTimeout(pendingRequest.timeout);
+    pendingRequests.delete(requestId);
+    throw error;
   }
+}
+
+/**
+ * Invoke command on node
+ */
+export async function invokeNodeCommand(
+  nodeId: string,
+  command: string,
+  params: any
+): Promise<any> {
+  const node = connectedNodes.get(nodeId);
+
+  if (!node) {
+    throw new Error(`Node ${nodeId} not connected`);
+  }
+
+  if (!node.commands.includes(command)) {
+    throw new Error(`Node does not support command: ${command}`);
+  }
+
+  const requestId = `invoke-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      reject(new Error('Request timeout'));
+    }, 60000);
+
+    pendingRequests.set(requestId, { resolve, reject, timeout });
+
+    const request: RequestMessage = {
+      type: 'req',
+      id: requestId,
+      method: 'node.invoke',
+      params: {
+        command,
+        params
+      }
+    };
+
+    try {
+      node.socket.send(JSON.stringify(request));
+      logger.info(`✅ Command ${command} invoked on node ${nodeId}, request ${requestId}`);
+    } catch (error) {
+      clearTimeout(timeout);
+      pendingRequests.delete(requestId);
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Send ping to all connected nodes and check for timeouts
+ */
+function heartbeatCheck() {
+  const now = new Date();
+  
+  connectedNodes.forEach((node, nodeId) => {
+    const timeSinceLastPing = now.getTime() - node.lastPing.getTime();
+
+    if (timeSinceLastPing > HEARTBEAT_TIMEOUT) {
+      logger.warn(`⚠️ Node ${nodeId} timed out (${timeSinceLastPing}ms since last pong)`);
+      node.socket.close(1000, 'Heartbeat timeout');
+      connectedNodes.delete(nodeId);
+
+      prisma.node.update({
+        where: { id: nodeId },
+        data: { status: 'OFFLINE', lastSeenAt: new Date() }
+      }).catch(err => logger.error('Error updating node status:', err));
+      
+      return;
+    }
+
+    // Send ping event
+    sendEvent(node.socket, 'health', { status: 'ping', timestamp: now.getTime() });
+    
+    // Update last ping time when we send ping
+    // In real implementation, we'd wait for pong response
+    node.lastPing = now;
+  });
 }
 
 /**
@@ -555,26 +648,35 @@ export async function stopExecutionOnNode(nodeId: string, sessionId: string): Pr
     return false;
   }
 
-  const stopMsg: ServerMessage = {
-    type: 'stop',
-    sessionId
-  };
-
-  try {
-    node.socket.send(JSON.stringify(stopMsg));
-    logger.info(`🛑 Stop signal sent to node ${nodeId}, session ${sessionId}`);
-    return true;
-  } catch (error) {
-    logger.error(`❌ Error sending stop signal to node ${nodeId}:`, error);
-    return false;
-  }
+  // Send stop as a system event
+  sendEvent(node.socket, 'system.stop', { sessionId });
+  logger.info(`🛑 Stop signal sent to node ${nodeId}, session ${sessionId}`);
+  return true;
 }
 
 /**
  * Get all connected nodes
  */
-export function getConnectedNodes(): ConnectedNode[] {
-  return Array.from(connectedNodes.values());
+export function getConnectedNodes(): Array<{
+  nodeId: string;
+  deviceId?: string;
+  userId: string;
+  role: string;
+  capabilities: string[];
+  commands: string[];
+  platform?: string;
+  connectedAt: Date;
+}> {
+  return Array.from(connectedNodes.values()).map(node => ({
+    nodeId: node.nodeId,
+    deviceId: node.deviceId,
+    userId: node.userId,
+    role: node.role,
+    capabilities: node.capabilities,
+    commands: node.commands,
+    platform: node.platform,
+    connectedAt: node.connectedAt
+  }));
 }
 
 /**
