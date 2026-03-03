@@ -36,7 +36,13 @@ import gatewayProxyRoutes from './modules/gateway-proxy/proxy.routes.js';
 import gatewayKeyRoutes from './modules/settings/gateway-key.routes.js';
 import commandCenterRoutes from './modules/command-center/command-center.routes.js';
 import agentSharingRoutes from './modules/agent-sharing/agent-sharing.routes.js';
+import { bridgeRoutes } from './modules/bridge/bridge.routes.js';
+import { initializeBridgeWebSocket } from './modules/bridge/websocket-server.js';
+import { initializeSecureBridgeWebSocket } from './modules/bridge/websocket-server-secure.js';
+import devicePairingRoutes from './routes/device-pairing.routes.js';
+import openclawRoutes from './routes/openclaw.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
+import { openclawGateway } from './services/openclaw-gateway-client.js';
 
 const app = Fastify({ logger: true });
 
@@ -91,6 +97,15 @@ await app.register(userApiKeyRoutes);
 // Agent Sharing (Phase 4)
 await app.register(agentSharingRoutes, { prefix: '/api' });
 
+// Agent Bridge (Phase 4B)
+await app.register(bridgeRoutes, { prefix: '/api/bridge/nodes' });
+
+// Device Pairing (Security)
+await app.register(devicePairingRoutes, { prefix: '/api/devices' });
+
+// OpenClaw Gateway Integration
+await app.register(openclawRoutes);
+
 // Settings
 await app.register(gatewayKeyRoutes);
 
@@ -112,6 +127,20 @@ app.get('/health', async () => ({
 const start = async () => {
   try {
     await app.listen({ port: env.PORT, host: '0.0.0.0' });
+    
+    // Initialize WebSocket servers for Agent Bridge
+    initializeBridgeWebSocket(app.server);
+    // TEMPORARILY DISABLED FOR TESTING
+    // initializeSecureBridgeWebSocket(app.server);
+    
+    // Initialize OpenClaw Gateway Client
+    try {
+      await openclawGateway.initialize();
+      app.log.info('✅ OpenClaw Gateway Client connected');
+    } catch (error) {
+      app.log.error('⚠️ OpenClaw Gateway Client failed to connect:', error);
+      app.log.warn('   ShelfZone will continue without OpenClaw integration');
+    }
   } catch (err) {
     app.log.error(err);
     process.exit(1);

@@ -39,3 +39,9 @@ export async function exportHandler(request: FastifyRequest, reply: FastifyReply
     .header('Content-Disposition', 'attachment; filename="billing-export.csv"')
     .send(csv);
 }
+
+export async function sharedUsageHandler(request: FastifyRequest, reply: FastifyReply) {
+  const query = dateRangeSchema.parse(request.query);
+  const data = await billingService.getSharedUsage(query.from, query.to);
+  return reply.send(data);
+}
