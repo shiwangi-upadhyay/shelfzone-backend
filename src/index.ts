@@ -36,6 +36,8 @@ import gatewayProxyRoutes from './modules/gateway-proxy/proxy.routes.js';
 import gatewayKeyRoutes from './modules/settings/gateway-key.routes.js';
 import commandCenterRoutes from './modules/command-center/command-center.routes.js';
 import agentSharingRoutes from './modules/agent-sharing/agent-sharing.routes.js';
+import { bridgeRoutes } from './modules/bridge/bridge.routes.js';
+import { initializeBridgeWebSocket } from './modules/bridge/websocket-server.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -91,6 +93,9 @@ await app.register(userApiKeyRoutes);
 // Agent Sharing (Phase 4)
 await app.register(agentSharingRoutes, { prefix: '/api' });
 
+// Agent Bridge (Phase 4B)
+await app.register(bridgeRoutes, { prefix: '/api/bridge/nodes' });
+
 // Settings
 await app.register(gatewayKeyRoutes);
 
@@ -112,6 +117,9 @@ app.get('/health', async () => ({
 const start = async () => {
   try {
     await app.listen({ port: env.PORT, host: '0.0.0.0' });
+    
+    // Initialize WebSocket server for Agent Bridge
+    initializeBridgeWebSocket(app.server);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
