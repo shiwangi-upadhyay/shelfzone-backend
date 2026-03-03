@@ -125,7 +125,8 @@ const start = async () => {
     
     // Initialize WebSocket servers for Agent Bridge
     initializeBridgeWebSocket(app.server);
-    initializeSecureBridgeWebSocket(app.server);
+    // TEMPORARILY DISABLED FOR TESTING
+    // initializeSecureBridgeWebSocket(app.server);
   } catch (err) {
     app.log.error(err);
     process.exit(1);

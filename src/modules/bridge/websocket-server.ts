@@ -114,7 +114,9 @@ export function initializeBridgeWebSocket(server: Server): WebSocketServer {
   const wss = new WebSocketServer({ 
     server,
     path: '/ws/bridge',
-    perMessageDeflate: false // Disable compression to prevent RSV1 errors
+    perMessageDeflate: false, // Disable compression to prevent RSV1 errors
+    maxPayload: 100 * 1024 * 1024, // 100MB max payload
+    skipUTF8Validation: false
   });
 
   logger.info('🌉 Agent Bridge WebSocket server initialized on /ws/bridge (OpenClaw Protocol v3)');
@@ -130,10 +132,14 @@ export function initializeBridgeWebSocket(server: Server): WebSocketServer {
     const challengeNonce = crypto.randomBytes(32).toString('base64');
     const challengeTs = Date.now();
 
-    // Send connect.challenge event immediately
-    sendEvent(ws, 'connect.challenge', {
-      nonce: challengeNonce,
-      ts: challengeTs
+    // Send connect.challenge event after ensuring connection is ready
+    setImmediate(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        sendEvent(ws, 'connect.challenge', {
+          nonce: challengeNonce,
+          ts: challengeTs
+        });
+      }
     });
 
     // Handle incoming messages
