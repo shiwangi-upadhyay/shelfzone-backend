@@ -253,7 +253,6 @@ export async function getAgentDetail(idOrSlug: string) {
       configLogs: {
         orderBy: { createdAt: 'desc' },
         take: 20,
-        include: { changer: { select: { id: true, email: true } } },
       },
     },
   });
@@ -267,7 +266,6 @@ export async function getAgentDetail(idOrSlug: string) {
         configLogs: {
           orderBy: { createdAt: 'desc' },
           take: 20,
-          include: { changer: { select: { id: true, email: true } } },
         },
       },
     });
@@ -275,8 +273,27 @@ export async function getAgentDetail(idOrSlug: string) {
 
   if (!agent) throw { statusCode: 404, error: 'Not Found', message: 'Agent not found' };
 
+  // Manually fetch changers for config logs, filtering out null changedBy values
+  const changedByIds = agent.configLogs
+    .map(log => log.changedBy)
+    .filter(id => id !== null);
+  
+  const changers = await prisma.user.findMany({
+    where: { id: { in: changedByIds } },
+    select: { id: true, email: true },
+  });
+
+  const changerMap = new Map(changers.map(c => [c.id, c]));
+
+  // Enrich config logs with changer data
+  const enrichedConfigLogs = agent.configLogs.map(log => ({
+    ...log,
+    changer: log.changedBy ? changerMap.get(log.changedBy) || null : null,
+  }));
+
   return {
     ...agent,
+    configLogs: enrichedConfigLogs,
     systemPrompt: agent.systemPrompt ? decrypt(agent.systemPrompt) : null,
   };
 }
