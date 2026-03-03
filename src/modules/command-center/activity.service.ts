@@ -36,6 +36,9 @@ class ActivityService {
       'Access-Control-Allow-Credentials': 'true',
     });
 
+    // Flush headers immediately
+    reply.raw.flushHeaders?.();
+
     // Store client
     this.clients.set(userId, reply);
 
@@ -48,9 +51,25 @@ class ActivityService {
       },
     });
 
+    // Keep connection alive with periodic heartbeat
+    const heartbeatInterval = setInterval(() => {
+      if (!this.clients.has(userId)) {
+        clearInterval(heartbeatInterval);
+        return;
+      }
+      try {
+        reply.raw.write(':heartbeat\n\n');
+      } catch (error) {
+        console.error('[ActivityService] Heartbeat failed:', error);
+        this.clients.delete(userId);
+        clearInterval(heartbeatInterval);
+      }
+    }, 30000); // Send heartbeat every 30 seconds
+
     // Handle client disconnect
     reply.raw.on('close', () => {
       this.clients.delete(userId);
+      clearInterval(heartbeatInterval);
     });
   }
 

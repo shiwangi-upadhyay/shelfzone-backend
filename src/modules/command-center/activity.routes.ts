@@ -43,7 +43,8 @@ export async function activityRoutes(fastify: FastifyInstance) {
     // Register SSE client (sets headers and keeps connection alive)
     activityService.registerClient(userId, reply);
     
-    // Keep connection open
+    // Keep connection open - prevent Fastify from auto-closing
+    reply.hijack();
     return reply;
   });
 

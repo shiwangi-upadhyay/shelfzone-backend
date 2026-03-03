@@ -7,6 +7,7 @@ import { agentSharingNotificationService } from '../agent-sharing/notification-h
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
 import { relayToRemoteNode } from '../bridge/instruction-relay.service.js';
+import { createConversation } from './conversation.service.js';
 
 const agentContextService = new AgentContextService(prisma);
 
@@ -94,10 +95,18 @@ export async function handleSendMessage(
       },
     });
 
+    // Ensure we have a valid conversationId
+    let actualConversationId = conversationId;
+    if (!actualConversationId) {
+      // Create a new conversation for this agent/user
+      const { conversation } = await createConversation(userId, agentId, `Conversation with ${agent.name}`);
+      actualConversationId = conversation.id;
+    }
+
     // Save user message to database
     await prisma.message.create({
       data: {
-        conversationId,
+        conversationId: actualConversationId,
         role: 'user',
         content: message,
         tokenCount: 0,
@@ -132,10 +141,11 @@ export async function handleSendMessage(
     // Create result object with needed properties
     const result = {
       agentModel: agent.model || 'unknown',
+      agentName: agent.name,
       startedAt,
       traceSessionId: traceSession.id,
       taskTraceId: taskTrace.id,
-      conversationId
+      conversationId: actualConversationId
     };
     
     // Set SSE headers with CORS
