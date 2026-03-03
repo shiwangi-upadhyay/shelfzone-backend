@@ -17,6 +17,13 @@ export async function getSummary(from?: string, to?: string) {
     _sum: { cost: true, tokensIn: true, tokensOut: true },
   });
 
+  // Include bridge session costs
+  const bridgeWhere: any = dateFilter ? { startedAt: dateFilter } : {};
+  const bridgeAgg = await prisma.bridgeSession.aggregate({
+    where: bridgeWhere,
+    _sum: { totalCost: true, tokensUsed: true },
+  });
+
   const activeAgents = await prisma.agentRegistry.count({
     where: { status: 'ACTIVE' },
   });
@@ -26,7 +33,7 @@ export async function getSummary(from?: string, to?: string) {
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-  const [costThisMonth, costLastMonth] = await Promise.all([
+  const [costThisMonth, costLastMonth, bridgeCostThisMonth, bridgeCostLastMonth] = await Promise.all([
     prisma.traceSession.aggregate({
       where: { startedAt: { gte: thisMonthStart } },
       _sum: { cost: true },
@@ -35,9 +42,17 @@ export async function getSummary(from?: string, to?: string) {
       where: { startedAt: { gte: lastMonthStart, lte: lastMonthEnd } },
       _sum: { cost: true },
     }),
+    prisma.bridgeSession.aggregate({
+      where: { startedAt: { gte: thisMonthStart } },
+      _sum: { totalCost: true },
+    }),
+    prisma.bridgeSession.aggregate({
+      where: { startedAt: { gte: lastMonthStart, lte: lastMonthEnd } },
+      _sum: { totalCost: true },
+    }),
   ]);
 
-  // Cost by day - last 30 days
+  // Cost by day - last 30 days (including bridge sessions)
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -46,16 +61,34 @@ export async function getSummary(from?: string, to?: string) {
     FROM trace_sessions
     WHERE started_at >= ${thirtyDaysAgo}
     GROUP BY DATE(started_at)
+    
+    UNION ALL
+    
+    SELECT DATE(started_at) as date, COALESCE(SUM(total_cost), 0)::float as cost
+    FROM bridge_sessions
+    WHERE started_at >= ${thirtyDaysAgo}
+    GROUP BY DATE(started_at)
+    
     ORDER BY date ASC
   `;
 
+  // Merge daily costs by date
+  const dailyCostMap = new Map<string, number>();
+  for (const d of dailyCosts) {
+    const dateStr = String(d.date).slice(0, 10);
+    dailyCostMap.set(dateStr, (dailyCostMap.get(dateStr) || 0) + Number(d.cost));
+  }
+  const mergedDailyCosts = Array.from(dailyCostMap.entries())
+    .map(([date, cost]) => ({ date, cost }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
   return {
-    totalCost: Number(agg._sum.cost ?? 0),
-    totalTokens: (agg._sum.tokensIn ?? 0) + (agg._sum.tokensOut ?? 0),
+    totalCost: Number(agg._sum.cost ?? 0) + Number(bridgeAgg._sum.totalCost ?? 0),
+    totalTokens: (agg._sum.tokensIn ?? 0) + (agg._sum.tokensOut ?? 0) + (bridgeAgg._sum.tokensUsed ?? 0),
     activeAgents,
-    costThisMonth: Number(costThisMonth._sum.cost ?? 0),
-    costLastMonth: Number(costLastMonth._sum.cost ?? 0),
-    costByDay: dailyCosts.map(d => ({ date: String(d.date).slice(0, 10), cost: Number(d.cost) })),
+    costThisMonth: Number(costThisMonth._sum.cost ?? 0) + Number(bridgeCostThisMonth._sum.totalCost ?? 0),
+    costLastMonth: Number(costLastMonth._sum.cost ?? 0) + Number(bridgeCostLastMonth._sum.totalCost ?? 0),
+    costByDay: mergedDailyCosts,
   };
 }
 
@@ -63,6 +96,7 @@ export async function getByAgent(from?: string, to?: string) {
   const dateFilter = buildDateFilter(from, to);
   const where: any = dateFilter ? { startedAt: dateFilter } : {};
 
+  // Get regular trace sessions
   const results = await prisma.traceSession.groupBy({
     by: ['agentId'],
     where,
@@ -71,27 +105,59 @@ export async function getByAgent(from?: string, to?: string) {
     orderBy: { _sum: { cost: 'desc' } },
   });
 
-  const agentIds = results.map(r => r.agentId);
+  // Get bridge sessions
+  const bridgeResults = await prisma.bridgeSession.groupBy({
+    by: ['agentId'],
+    where,
+    _sum: { totalCost: true, tokensUsed: true },
+    _count: true,
+  });
+
+  // Merge results by agent
+  const agentCostMap = new Map<string, {
+    totalCost: number;
+    totalTokens: number;
+    sessionCount: number;
+  }>();
+
+  for (const r of results) {
+    agentCostMap.set(r.agentId, {
+      totalCost: Number(r._sum.cost ?? 0),
+      totalTokens: (r._sum.tokensIn ?? 0) + (r._sum.tokensOut ?? 0),
+      sessionCount: r._count,
+    });
+  }
+
+  for (const r of bridgeResults) {
+    const existing = agentCostMap.get(r.agentId) || { totalCost: 0, totalTokens: 0, sessionCount: 0 };
+    agentCostMap.set(r.agentId, {
+      totalCost: existing.totalCost + Number(r._sum.totalCost ?? 0),
+      totalTokens: existing.totalTokens + (r._sum.tokensUsed ?? 0),
+      sessionCount: existing.sessionCount + r._count,
+    });
+  }
+
+  const agentIds = Array.from(agentCostMap.keys());
   const agents = await prisma.agentRegistry.findMany({
     where: { id: { in: agentIds } },
     select: { id: true, name: true, model: true },
   });
   const agentMap = new Map(agents.map(a => [a.id, a]));
 
-  return results.map(r => {
-    const agent = agentMap.get(r.agentId);
-    const totalCost = Number(r._sum.cost ?? 0);
-    const sessionCount = r._count;
-    return {
-      agentId: r.agentId,
-      agentName: agent?.name ?? 'Unknown',
-      model: agent?.model ?? 'Unknown',
-      totalCost,
-      totalTokens: (r._sum.tokensIn ?? 0) + (r._sum.tokensOut ?? 0),
-      sessionCount,
-      avgCostPerSession: sessionCount > 0 ? Math.round((totalCost / sessionCount) * 1e6) / 1e6 : 0,
-    };
-  });
+  return Array.from(agentCostMap.entries())
+    .map(([agentId, data]) => {
+      const agent = agentMap.get(agentId);
+      return {
+        agentId,
+        agentName: agent?.name ?? 'Unknown',
+        model: agent?.model ?? 'Unknown',
+        totalCost: data.totalCost,
+        totalTokens: data.totalTokens,
+        sessionCount: data.sessionCount,
+        avgCostPerSession: data.sessionCount > 0 ? Math.round((data.totalCost / data.sessionCount) * 1e6) / 1e6 : 0,
+      };
+    })
+    .sort((a, b) => b.totalCost - a.totalCost);
 }
 
 export async function getByEmployee(from?: string, to?: string) {
@@ -228,4 +294,111 @@ export async function getExportCsv(from?: string, to?: string) {
   );
 
   return [header, ...csvRows].join('\n');
+}
+
+/**
+ * Get shared agent usage details
+ * Shows: "Shiwangi used FrontendBot — $0.45 (Prabal's budget)"
+ * Includes both regular trace sessions and bridge sessions (remote execution)
+ */
+export async function getSharedUsage(from?: string, to?: string) {
+  const dateFilter = buildDateFilter(from, to);
+
+  // Regular trace sessions where cost_paid_by differs from owner
+  const rows = await prisma.$queryRaw<Array<{
+    user_id: string;
+    user_name: string;
+    agent_id: string;
+    agent_name: string;
+    owner_id: string;
+    owner_name: string;
+    total_cost: number;
+    session_count: number;
+  }>>`
+    SELECT
+      tt.owner_id as user_id,
+      COALESCE(e.first_name || ' ' || e.last_name, u.email) as user_name,
+      ts.agent_id,
+      ar.name as agent_name,
+      ts.cost_paid_by as owner_id,
+      COALESCE(e2.first_name || ' ' || e2.last_name, u2.email) as owner_name,
+      COALESCE(SUM(ts.cost), 0)::float as total_cost,
+      COUNT(*)::int as session_count
+    FROM trace_sessions ts
+    JOIN task_traces tt ON tt.id = ts.task_trace_id
+    JOIN agent_registry ar ON ar.id = ts.agent_id
+    JOIN users u ON u.id = tt.owner_id
+    LEFT JOIN employees e ON e.user_id = u.id
+    JOIN users u2 ON u2.id = ts.cost_paid_by
+    LEFT JOIN employees e2 ON e2.user_id = u2.id
+    WHERE ts.cost_paid_by IS NOT NULL
+      AND ts.cost_paid_by != tt.owner_id
+      ${dateFilter ? Prisma.sql`AND ts.started_at >= ${new Date(from!)} AND ts.started_at <= ${new Date(to + 'T23:59:59.999Z')}` : Prisma.empty}
+    GROUP BY tt.owner_id, e.first_name, e.last_name, u.email, ts.agent_id, ar.name, ts.cost_paid_by, e2.first_name, e2.last_name, u2.email
+    ORDER BY total_cost DESC
+  `;
+
+  // Bridge sessions where instructor != node owner
+  const bridgeRows = await prisma.$queryRaw<Array<{
+    user_id: string;
+    user_name: string;
+    agent_id: string;
+    agent_name: string;
+    owner_id: string;
+    owner_name: string;
+    total_cost: number;
+    session_count: number;
+  }>>`
+    SELECT
+      bs.instructor_id as user_id,
+      COALESCE(e.first_name || ' ' || e.last_name, u.email) as user_name,
+      bs.agent_id,
+      ar.name as agent_name,
+      n.user_id as owner_id,
+      COALESCE(e2.first_name || ' ' || e2.last_name, u2.email) as owner_name,
+      COALESCE(SUM(bs.total_cost), 0)::float as total_cost,
+      COUNT(*)::int as session_count
+    FROM bridge_sessions bs
+    JOIN nodes n ON n.id = bs.node_id
+    JOIN agent_registry ar ON ar.id = bs.agent_id
+    JOIN users u ON u.id = bs.instructor_id
+    LEFT JOIN employees e ON e.user_id = u.id
+    JOIN users u2 ON u2.id = n.user_id
+    LEFT JOIN employees e2 ON e2.user_id = u2.id
+    WHERE bs.instructor_id != n.user_id
+      ${dateFilter ? Prisma.sql`AND bs.started_at >= ${new Date(from!)} AND bs.started_at <= ${new Date(to + 'T23:59:59.999Z')}` : Prisma.empty}
+    GROUP BY bs.instructor_id, e.first_name, e.last_name, u.email, bs.agent_id, ar.name, n.user_id, e2.first_name, e2.last_name, u2.email
+    ORDER BY total_cost DESC
+  `;
+
+  // Merge and format results
+  const allRows = [
+    ...rows.map(r => ({
+      userId: r.user_id,
+      userName: r.user_name,
+      agentId: r.agent_id,
+      agentName: r.agent_name,
+      ownerId: r.owner_id,
+      ownerName: r.owner_name,
+      totalCost: Number(r.total_cost),
+      sessionCount: Number(r.session_count),
+      type: 'local' as const,
+      displayText: `${r.user_name} used ${r.agent_name} — $${Number(r.total_cost).toFixed(2)} (${r.owner_name}'s budget)`,
+    })),
+    ...bridgeRows.map(r => ({
+      userId: r.user_id,
+      userName: r.user_name,
+      agentId: r.agent_id,
+      agentName: r.agent_name,
+      ownerId: r.owner_id,
+      ownerName: r.owner_name,
+      totalCost: Number(r.total_cost),
+      sessionCount: Number(r.session_count),
+      type: 'remote_execution' as const,
+      displayText: `${r.user_name} used ${r.agent_name} remotely — $${Number(r.total_cost).toFixed(2)} (${r.owner_name}'s budget)`,
+    })),
+  ];
+
+  // Sort by cost descending
+  return allRows.sort((a, b) => b.totalCost - a.totalCost);
 }

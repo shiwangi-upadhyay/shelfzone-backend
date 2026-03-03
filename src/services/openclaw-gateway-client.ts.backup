@@ -1,0 +1,496 @@
+/**
+ * OpenClaw Gateway WebSocket Client
+ * 
+ * Connects ShelfZone backend to OpenClaw Gateway as an operator client.
+ * Enables ShelfZone to:
+ * - Fetch agent list from OpenClaw
+ * - Spawn agent sessions
+ * - Send instructions to agents
+ * - Stream results back to browser
+ */
+
+import { WebSocket } from 'ws';
+import { EventEmitter } from 'events';
+import { logger } from '../lib/logger.js';
+import crypto from 'crypto';
+import fs from 'fs/promises';
+import path from 'path';
+import os from 'os';
+import * as ed25519Module from '@noble/ed25519';
+
+// Set sha512 for ed25519 using Node's crypto - REQUIRED for the library to work
+ed25519Module.utils.sha512Sync = (...m: Uint8Array[]) => {
+  return Uint8Array.from(crypto.createHash('sha512').update(Buffer.concat(m)).digest());
+};
+
+ed25519Module.utils.sha512Async = async (...m: Uint8Array[]) => {
+  return Uint8Array.from(crypto.createHash('sha512').update(Buffer.concat(m)).digest());
+};
+
+interface OpenClawConfig {
+  gateway: {
+    auth: {
+      token: string;
+    };
+    port?: number;
+    host?: string;
+  };
+}
+
+interface Agent {
+  id: string;
+  label?: string;
+  model?: string;
+  thinking?: string;
+}
+
+interface ConnectChallenge {
+  nonce: string;
+  ts: number;
+}
+
+export class OpenClawGatewayClient extends EventEmitter {
+  private ws: WebSocket | null = null;
+  private connected = false;
+  private authenticated = false;
+  private config: OpenClawConfig | null = null;
+  private gatewayToken: string | null = null;
+  private requestId = 0;
+  private pendingRequests = new Map<string, {
+    resolve: (value: any) => void;
+    reject: (error: Error) => void;
+    timeout: NodeJS.Timeout;
+  }>();
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 10;
+  private reconnectDelay = 5000;
+  private deviceId: string;
+  private challenge: ConnectChallenge | null = null;
+  private privateKey: Uint8Array | null = null;
+  private publicKey: Uint8Array | null = null;
+
+  constructor() {
+    super();
+    // Generate or load device keypair
+    this.initializeDeviceIdentity();
+  }
+
+  /**
+   * Initialize device identity with Ed25519 keypair
+   */
+  private async initializeDeviceIdentity(): Promise<void> {
+    const deviceKeyPath = path.join(os.homedir(), '.openclaw', 'shelfzone-device-key.json');
+    
+    try {
+      // Try to load existing keypair
+      const keyData = await fs.readFile(deviceKeyPath, 'utf-8');
+      const keys = JSON.parse(keyData);
+      this.privateKey = new Uint8Array(Buffer.from(keys.privateKey, 'hex'));
+      this.publicKey = new Uint8Array(Buffer.from(keys.publicKey, 'hex'));
+      this.deviceId = keys.deviceId;
+      logger.info('✅ Loaded existing device identity');
+    } catch (error) {
+      // Generate new keypair (32 bytes for Ed25519)
+      this.privateKey = crypto.randomBytes(32);
+      this.publicKey = await getPublicKey(this.privateKey);
+      this.deviceId = `shelfzone-${Buffer.from(this.publicKey).toString('hex').substring(0, 16)}`;
+      
+      // Save keypair
+      const keys = {
+        deviceId: this.deviceId,
+        privateKey: Buffer.from(this.privateKey).toString('hex'),
+        publicKey: Buffer.from(this.publicKey).toString('hex')
+      };
+      
+      await fs.mkdir(path.dirname(deviceKeyPath), { recursive: true });
+      await fs.writeFile(deviceKeyPath, JSON.stringify(keys, null, 2));
+      logger.info('✅ Generated new device identity:', this.deviceId);
+    }
+  }
+
+  /**
+   * Initialize and connect to OpenClaw Gateway
+   */
+  async initialize(): Promise<void> {
+    try {
+      // Initialize device identity first
+      await this.initializeDeviceIdentity();
+      
+      // Load OpenClaw config
+      await this.loadConfig();
+      
+      if (!this.gatewayToken) {
+        throw new Error('Gateway token not found in OpenClaw config');
+      }
+
+      // Connect to gateway
+      await this.connect();
+      
+      logger.info('🔗 OpenClaw Gateway Client initialized');
+    } catch (error) {
+      logger.error('❌ Failed to initialize OpenClaw Gateway Client:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load OpenClaw configuration
+   */
+  private async loadConfig(): Promise<void> {
+    const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+    
+    try {
+      const configData = await fs.readFile(configPath, 'utf-8');
+      this.config = JSON.parse(configData);
+      this.gatewayToken = this.config?.gateway?.auth?.token || null;
+      
+      logger.info('✅ Loaded OpenClaw config', {
+        host: this.config?.gateway?.host || 'localhost',
+        port: this.config?.gateway?.port || 18789
+      });
+    } catch (error) {
+      logger.error('❌ Failed to load OpenClaw config:', error);
+      throw new Error('OpenClaw config not found. Is OpenClaw installed?');
+    }
+  }
+
+  /**
+   * Connect to OpenClaw Gateway WebSocket
+   */
+  private async connect(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const host = this.config?.gateway?.host || 'localhost';
+      const port = this.config?.gateway?.port || 18789;
+      const wsUrl = `ws://${host}:${port}`;
+
+      logger.info(`📡 Connecting to OpenClaw Gateway at ${wsUrl}`);
+
+      this.ws = new WebSocket(wsUrl, {
+        perMessageDeflate: false
+      });
+
+      this.ws.on('open', () => {
+        logger.info('✅ WebSocket connected to OpenClaw Gateway');
+        this.connected = true;
+        this.reconnectAttempts = 0;
+        // Don't resolve yet - wait for authentication
+      });
+
+      this.ws.on('message', async (data: Buffer) => {
+        try {
+          const message = JSON.parse(data.toString());
+          await this.handleMessage(message);
+          
+          // Resolve on successful authentication
+          if (this.authenticated && !this.ws) {
+            resolve();
+          }
+        } catch (error) {
+          logger.error('❌ Error processing message:', error);
+        }
+      });
+
+      this.ws.on('error', (error) => {
+        logger.error('❌ WebSocket error:', error);
+        reject(error);
+      });
+
+      this.ws.on('close', (code, reason) => {
+        logger.warn(`🔌 Connection closed: ${code} - ${reason.toString()}`);
+        this.connected = false;
+        this.authenticated = false;
+        this.emit('disconnected');
+        
+        // Attempt reconnection
+        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          logger.info(`🔄 Reconnecting (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+          setTimeout(() => this.connect(), this.reconnectDelay);
+        }
+      });
+
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        if (!this.authenticated) {
+          reject(new Error('Connection timeout - authentication not completed'));
+        }
+      }, 10000);
+    });
+  }
+
+  /**
+   * Handle incoming WebSocket messages
+   */
+  private async handleMessage(message: any): Promise<void> {
+    logger.debug('📨 Received message:', message.type, message.event || message.method);
+
+    switch (message.type) {
+      case 'event':
+        await this.handleEvent(message);
+        break;
+      
+      case 'res':
+        this.handleResponse(message);
+        break;
+      
+      default:
+        logger.warn('⚠️ Unknown message type:', message.type);
+    }
+  }
+
+  /**
+   * Handle events from Gateway
+   */
+  private async handleEvent(message: any): Promise<void> {
+    const { event, payload } = message;
+
+    switch (event) {
+      case 'connect.challenge':
+        this.challenge = payload;
+        logger.info('🔐 Received connect challenge');
+        await this.authenticate();
+        break;
+      
+      case 'agent':
+        // Agent execution event (streaming)
+        this.emit('agent-event', payload);
+        break;
+      
+      case 'presence':
+        this.emit('presence', payload);
+        break;
+      
+      case 'health':
+        // Heartbeat - could respond if needed
+        break;
+      
+      default:
+        logger.debug('📨 Event:', event, payload);
+    }
+  }
+
+  /**
+   * Handle responses to requests
+   */
+  private handleResponse(message: any): void {
+    const { id, ok, payload, error } = message;
+    const pending = this.pendingRequests.get(id);
+
+    if (!pending) {
+      logger.warn('⚠️ Response for unknown request:', id);
+      return;
+    }
+
+    clearTimeout(pending.timeout);
+    this.pendingRequests.delete(id);
+
+    if (ok) {
+      pending.resolve(payload);
+    } else {
+      pending.reject(new Error(error?.message || 'Request failed'));
+    }
+  }
+
+  /**
+   * Authenticate with OpenClaw Gateway
+   * 
+   * Using gateway.controlUi.dangerouslyDisableDeviceAuth = true
+   * which allows connecting without device identity for control UI clients
+   */
+  private async authenticate(): Promise<void> {
+    if (!this.challenge) {
+      throw new Error('No challenge received');
+    }
+
+    // Connect without device identity (allowed by dangerouslyDisableDeviceAuth)
+    const connectRequest = {
+      type: 'req',
+      id: this.generateRequestId(),
+      method: 'connect',
+      params: {
+        minProtocol: 3,
+        maxProtocol: 3,
+        client: {
+          id: 'cli',
+          version: '1.0.0',
+          platform: 'linux',
+          mode: 'cli'
+        },
+        role: 'operator',
+        scopes: ['operator.read', 'operator.write'],
+        caps: [],
+        commands: [],
+        permissions: {},
+        auth: {
+          token: this.gatewayToken
+        },
+        locale: 'en-US',
+        userAgent: 'shelfzone-backend/1.0.0'
+        // NO device field - relying on dangerouslyDisableDeviceAuth
+      }
+    };
+
+    logger.info('📤 Sending connect request');
+    
+    try {
+      const response = await this.sendRequest('connect', connectRequest.params, connectRequest.id);
+      
+      if (response.type === 'hello-ok') {
+        this.authenticated = true;
+        logger.info('🎉 Authenticated with OpenClaw Gateway', {
+          protocol: response.protocol,
+          policy: response.policy
+        });
+        this.emit('authenticated');
+      }
+    } catch (error) {
+      logger.error('❌ Authentication failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send request to Gateway and wait for response
+   */
+  private sendRequest(method: string, params: any, requestId?: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || !this.connected) {
+        return reject(new Error('Not connected to gateway'));
+      }
+
+      const id = requestId || this.generateRequestId();
+      const request = {
+        type: 'req',
+        id,
+        method,
+        params
+      };
+
+      // Set up timeout
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(id);
+        reject(new Error(`Request timeout: ${method}`));
+      }, 30000); // 30 second timeout
+
+      // Store pending request
+      this.pendingRequests.set(id, { resolve, reject, timeout });
+
+      // Send request
+      this.ws.send(JSON.stringify(request));
+      logger.debug('📤 Sent request:', method, id);
+    });
+  }
+
+  /**
+   * Generate unique request ID
+   */
+  private generateRequestId(): string {
+    return `req-${++this.requestId}`;
+  }
+
+  /**
+   * Get list of agents from OpenClaw
+   */
+  async getAgentList(): Promise<Agent[]> {
+    if (!this.authenticated) {
+      throw new Error('Not authenticated with gateway');
+    }
+
+    try {
+      const response = await this.sendRequest('agents.list', {});
+      return response.agents || [];
+    } catch (error) {
+      logger.error('❌ Failed to get agent list:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Spawn agent session and send instruction
+   */
+  async spawnAgent(agentId: string, task: string, mode: 'run' | 'session' = 'run'): Promise<any> {
+    if (!this.authenticated) {
+      throw new Error('Not authenticated with gateway');
+    }
+
+    try {
+      const response = await this.sendRequest('sessions.spawn', {
+        agentId,
+        task,
+        mode,
+        timeoutSeconds: 300 // 5 minutes
+      });
+
+      logger.info('✅ Agent spawned:', { agentId, mode, sessionKey: response.childSessionKey });
+      return response;
+    } catch (error) {
+      logger.error('❌ Failed to spawn agent:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Send message to existing session
+   */
+  async sendMessage(sessionKey: string, message: string): Promise<any> {
+    if (!this.authenticated) {
+      throw new Error('Not authenticated with gateway');
+    }
+
+    try {
+      const response = await this.sendRequest('sessions.send', {
+        sessionKey,
+        message,
+        timeoutSeconds: 300
+      });
+
+      return response;
+    } catch (error) {
+      logger.error('❌ Failed to send message:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get session history
+   */
+  async getSessionHistory(sessionKey: string, limit: number = 50): Promise<any> {
+    if (!this.authenticated) {
+      throw new Error('Not authenticated with gateway');
+    }
+
+    try {
+      const response = await this.sendRequest('sessions.history', {
+        sessionKey,
+        limit
+      });
+
+      return response;
+    } catch (error) {
+      logger.error('❌ Failed to get session history:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if connected and authenticated
+   */
+  isReady(): boolean {
+    return this.connected && this.authenticated;
+  }
+
+  /**
+   * Disconnect from gateway
+   */
+  disconnect(): void {
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.connected = false;
+    this.authenticated = false;
+  }
+}
+
+// Singleton instance
+export const openclawGateway = new OpenClawGatewayClient();

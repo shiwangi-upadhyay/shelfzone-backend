@@ -1,5 +1,6 @@
 import { prisma } from '../../lib/prisma.js';
 import { SharePermission, ShareMode, ShareStatus } from '@prisma/client';
+import { agentSharingNotificationService } from './notification-hooks.service.js';
 
 export interface CreateShareInput {
   agentId: string;
@@ -83,7 +84,18 @@ export class AgentSharingService {
       },
     });
 
-    // TODO: Send notification to shared user
+    // Send notification to shared user
+    const ownerName = share.owner.employee
+      ? `${share.owner.employee.firstName} ${share.owner.employee.lastName}`
+      : share.owner.email;
+
+    await agentSharingNotificationService.notifyAgentShared({
+      receiverUserId: share.sharedWithUserId,
+      ownerName,
+      agentName: share.agent.name,
+      permission: share.permission,
+      mode: share.mode,
+    });
 
     return share;
   }
@@ -114,7 +126,11 @@ export class AgentSharingService {
       },
     });
 
-    // TODO: Send notification to shared user
+    // Send notification to shared user
+    await agentSharingNotificationService.notifyShareRevoked({
+      receiverUserId: updatedShare.sharedWithUserId,
+      agentName: updatedShare.agent.name,
+    });
 
     return updatedShare;
   }
@@ -220,6 +236,21 @@ export class AgentSharingService {
       },
     });
 
+    // Notify about changes
+    const changes: string[] = [];
+    if (updates.permission) changes.push(`permission changed to ${updates.permission}`);
+    if (updates.mode) changes.push(`mode changed to ${updates.mode}`);
+    if (updates.costLimit !== undefined) changes.push(`cost limit updated`);
+    if (updates.expiresAt !== undefined) changes.push(`expiration date updated`);
+
+    if (changes.length > 0) {
+      await agentSharingNotificationService.notifyShareUpdated({
+        receiverUserId: share.sharedWithUserId,
+        agentName: updatedShare.agent.name,
+        changes,
+      });
+    }
+
     return updatedShare;
   }
 
@@ -250,7 +281,12 @@ export class AgentSharingService {
       },
     });
 
-    // TODO: Send notification to owner
+    // Send notification to owner
+    await agentSharingNotificationService.notifyShareUpdated({
+      receiverUserId: share.ownerId,
+      agentName: updated.agent.name,
+      changes: ['Transfer released'],
+    });
 
     return updated;
   }
@@ -331,7 +367,20 @@ export class AgentSharingService {
         data: { status: ShareStatus.revoked },
       });
 
-      // TODO: Send notification to both owner and shared user
+      // Get agent details for notification
+      const agent = await prisma.agentRegistry.findUnique({
+        where: { id: agentId },
+        select: { name: true },
+      });
+
+      if (agent) {
+        await agentSharingNotificationService.notifyCostLimitReached({
+          ownerUserId: share.ownerId,
+          receiverUserId: share.sharedWithUserId,
+          agentName: agent.name,
+          costLimit: Number(share.costLimit),
+        });
+      }
     }
   }
 }

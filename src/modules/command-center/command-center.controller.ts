@@ -3,8 +3,10 @@ import { sendMessageSchema, SendMessageInput } from './command-center.schemas.js
 import { streamMessage, calculateCost } from './command-center.service.js';
 import { AgentContextService } from './agent-context.service.js';
 import { agentSharingService } from '../agent-sharing/agent-sharing.service.js';
+import { agentSharingNotificationService } from '../agent-sharing/notification-hooks.service.js';
 import { prisma } from '../../lib/prisma.js';
 import { Prisma } from '@prisma/client';
+import { relayToRemoteNode } from '../bridge/instruction-relay.service.js';
 
 const agentContextService = new AgentContextService(prisma);
 
@@ -34,8 +36,108 @@ export async function handleSendMessage(
       });
     }
 
-    const result = await streamMessage(userId, agentId, conversationId, message, attachments);
+    // Check if this agent runs on a remote node
+    const agent = await prisma.agentRegistry.findUnique({
+      where: { id: agentId },
+      include: {
+        node: true
+      }
+    });
 
+    if (!agent) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: 'Agent not found'
+      });
+    }
+
+    // If agent is on a remote node, relay instruction
+    if (agent.nodeId && agent.node) {
+      return await relayToRemoteNode({
+        agentId,
+        nodeId: agent.nodeId as string, // Type assertion - we've checked it's not null
+        instruction: message,
+        userId,
+        conversationId,
+        reply
+      });
+    }
+
+    // Create trace records first
+    const startedAt = new Date();
+    
+    // First create the task trace (required for traceSession)
+    const taskTrace = await prisma.taskTrace.create({
+      data: {
+        instruction: message,
+        status: 'in_progress',
+        startedAt,
+        owner: {
+          connect: { id: userId }
+        },
+        masterAgent: {
+          connect: { id: agentId }
+        }
+      },
+    });
+
+    const traceSession = await prisma.traceSession.create({
+      data: {
+        status: 'running',
+        startedAt,
+        agent: {
+          connect: { id: agentId }
+        },
+        taskTrace: {
+          connect: { id: taskTrace.id }
+        }
+      },
+    });
+
+    // Save user message to database
+    await prisma.message.create({
+      data: {
+        conversationId,
+        role: 'user',
+        content: message,
+        tokenCount: 0,
+        cost: 0,
+        traceSessionId: traceSession.id,
+      },
+    });
+
+    // Execute via OpenClaw CLI
+    const { exec } = await import('child_process');
+    const { promisify } = await import('util');
+    const execAsync = promisify(exec);
+    
+    const openclawCommand = `openclaw agent --agent ${agent.name} --message "${message.replace(/"/g, '\\"')}" --deliver --json`;
+    
+    request.log.info(`📤 Executing: ${openclawCommand}`);
+    
+    const { stdout, stderr } = await execAsync(openclawCommand, {
+      timeout: 300000, // 5 minutes
+      maxBuffer: 10 * 1024 * 1024
+    });
+    
+    if (stderr && !stderr.includes('warn')) {
+      request.log.warn('OpenClaw stderr:', stderr);
+    }
+    
+    const openclawResult = JSON.parse(stdout);
+    
+    // Extract the response text
+    const responseText = openclawResult.response || openclawResult.message || JSON.stringify(openclawResult);
+    
+    // Create result object with needed properties
+    const result = {
+      agentModel: agent.model || 'unknown',
+      startedAt,
+      traceSessionId: traceSession.id,
+      taskTraceId: taskTrace.id,
+      conversationId
+    };
+    
     // Set SSE headers with CORS
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -45,53 +147,18 @@ export async function handleSendMessage(
       'Access-Control-Allow-Credentials': 'true',
     });
 
-    const reader = result.body.getReader();
-    const decoder = new TextDecoder();
     const encoder = new TextEncoder();
 
-    let buffer = '';
-    let fullResponse = '';
+    let fullResponse = responseText;
     let inputTokens = 0;
     let outputTokens = 0;
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        // Decode and buffer
-        buffer += decoder.decode(value, { stream: true });
-
-        // Process complete lines
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') continue;
-
-          try {
-            const event = JSON.parse(data);
-
-            // Extract text chunks
-            if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
-              const text = event.delta.text;
-              fullResponse += text;
-
-              // Send chunk to frontend
-              reply.raw.write(encoder.encode(`event: chunk\ndata: ${JSON.stringify({ text })}\n\n`));
-            }
-
-            // Capture tokens
-            if (event.type === 'message_start') {
-              inputTokens = event.message?.usage?.input_tokens || 0;
-            }
-            if (event.type === 'message_delta') {
-              outputTokens += event.usage?.output_tokens || 0;
-            }
-          } catch {}
-        }
+      // Stream the complete response word by word for UI effect
+      const words = responseText.split(' ');
+      for (const word of words) {
+        reply.raw.write(encoder.encode(`event: chunk\ndata: ${JSON.stringify({ text: word + ' ' })}\n\n`));
+        await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay between words
       }
 
       // Save to database (after streaming completes)
@@ -136,14 +203,80 @@ export async function handleSendMessage(
       });
 
       // Track shared agent usage costs (if user is using a shared agent)
+      console.log('[COST_ATTRIBUTION] Starting cost attribution check', {
+        agentId,
+        userId,
+        traceSessionId: result.traceSessionId,
+      });
+
       const agent = await prisma.agentRegistry.findUnique({
         where: { id: agentId },
         select: { createdBy: true },
       });
 
-      if (agent && agent.createdBy !== userId) {
-        // This is a shared agent - track cost for the share
-        await agentSharingService.trackSharedCost(agentId, userId, cost.totalCost);
+      console.log('[COST_ATTRIBUTION] Agent lookup result', {
+        agentFound: !!agent,
+        createdBy: agent?.createdBy,
+        currentUserId: userId,
+      });
+
+      const ownerId = agent?.createdBy || userId;
+      const isSharedAgent = agent && agent.createdBy !== userId;
+
+      console.log('[COST_ATTRIBUTION] Shared agent check', {
+        ownerId,
+        isSharedAgent,
+        willUpdateCostPaidBy: isSharedAgent,
+      });
+
+      if (isSharedAgent) {
+        try {
+          console.log('[COST_ATTRIBUTION] Processing shared agent usage...');
+          
+          // This is a shared agent - track cost for the share
+          await agentSharingService.trackSharedCost(agentId, userId, cost.totalCost);
+          console.log('[COST_ATTRIBUTION] trackSharedCost completed');
+          
+          // Update trace session with cost payer (always the owner)
+          const updateResult = await prisma.traceSession.update({
+            where: { id: result.traceSessionId },
+            data: { costPaidBy: ownerId },
+          });
+          
+          console.log('[COST_ATTRIBUTION] Successfully updated costPaidBy', {
+            traceSessionId: result.traceSessionId,
+            costPaidBy: updateResult.costPaidBy,
+            ownerId,
+          });
+
+          // Notify owner that their agent was used
+          const currentUser = await prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+              email: true,
+              employee: { select: { firstName: true, lastName: true } },
+            },
+          });
+
+          const userName = currentUser?.employee
+            ? `${currentUser.employee.firstName} ${currentUser.employee.lastName}`
+            : currentUser?.email || 'Unknown User';
+
+          await agentSharingNotificationService.notifySharedAgentUsed({
+            ownerUserId: ownerId,
+            userName,
+            agentName: result.agentName,
+            cost: cost.totalCost,
+          });
+          
+          console.log('[COST_ATTRIBUTION] Notification sent to owner');
+        } catch (error) {
+          console.error('[COST_ATTRIBUTION] ERROR during cost attribution:', error);
+          // Don't throw - we don't want to fail the request if cost attribution fails
+          // But log it so we can investigate
+        }
+      } else {
+        console.log('[COST_ATTRIBUTION] Not a shared agent, skipping cost attribution');
       }
 
       // Track agent context usage
