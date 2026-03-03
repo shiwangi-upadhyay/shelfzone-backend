@@ -30,6 +30,10 @@ const AUTO_APPROVE_LOCAL = process.env.DEVICE_PAIRING_AUTO_APPROVE_LOCAL === 'tr
 // Challenge nonce storage (in production, use Redis)
 const challengeNonces = new Map<string, { nonce: string; timestamp: number }>();
 
+// Connection rate limiting (per IP)
+const connectionAttempts = new Map<string, number[]>();
+const MAX_CONNECTIONS_PER_MINUTE = 10;
+
 // Connected node state
 interface ConnectedNode {
   nodeId: string;
@@ -62,6 +66,20 @@ export function initializeSecureBridgeWebSocket(server: Server): WebSocketServer
   wss.on('connection', async (ws: WebSocket, req) => {
     const clientIp = req.socket.remoteAddress || 'unknown';
     logger.info(`🔌 New secure connection from ${clientIp}`);
+
+    // Rate limit check
+    const now = Date.now();
+    const attempts = connectionAttempts.get(clientIp) || [];
+    const recentAttempts = attempts.filter(t => now - t < 60000);
+
+    if (recentAttempts.length >= MAX_CONNECTIONS_PER_MINUTE) {
+      logger.warn(`⚠️ Rate limit exceeded for ${clientIp}: ${recentAttempts.length} connections in 1 minute`);
+      ws.close(1008, 'Too many connection attempts');
+      return;
+    }
+
+    recentAttempts.push(now);
+    connectionAttempts.set(clientIp, recentAttempts);
 
     // Step 1: Send challenge BEFORE any authentication
     const { nonce, timestamp } = generateChallenge();
@@ -139,6 +157,19 @@ export function initializeSecureBridgeWebSocket(server: Server): WebSocketServer
   setInterval(() => {
     heartbeatCheck();
   }, HEARTBEAT_INTERVAL);
+
+  // Cleanup old connection attempts
+  setInterval(() => {
+    const now = Date.now();
+    for (const [ip, attempts] of connectionAttempts.entries()) {
+      const recent = attempts.filter(t => now - t < 60000);
+      if (recent.length === 0) {
+        connectionAttempts.delete(ip);
+      } else {
+        connectionAttempts.set(ip, recent);
+      }
+    }
+  }, 60000); // Clean every minute
 
   return wss;
 }
@@ -220,6 +251,8 @@ async function handleSecureConnect(
   }
 
   // If no valid device token, check for gateway token (pairing flow)
+  let pairingTokenToDelete: string | null = null;
+  
   if (!deviceToken && params.auth?.token) {
     const result = await handleDevicePairing(
       device,
@@ -235,6 +268,7 @@ async function handleSecureConnect(
     }
 
     deviceToken = result.deviceToken!;
+    pairingTokenToDelete = result.gatewayToken || null;
   }
 
   if (!deviceToken) {
@@ -315,6 +349,12 @@ async function handleSecureConnect(
 
   ws.send(JSON.stringify(response));
 
+  // NOW delete the pairing token after successful hello-ok
+  if (pairingTokenToDelete) {
+    await prisma.$executeRaw`DELETE FROM pairing_tokens WHERE token = ${pairingTokenToDelete}`;
+    logger.debug(`🗑️ Pairing token consumed after successful connection`);
+  }
+
   await logSecurityEvent(
     device.id,
     node.id,
@@ -337,6 +377,7 @@ async function handleDevicePairing(
 ): Promise<{
   success: boolean;
   deviceToken?: DeviceTokenPayload;
+  gatewayToken?: string;
   errorCode?: string;
   errorMessage?: string;
 }> {
@@ -438,8 +479,7 @@ async function handleDevicePairing(
     }
   });
 
-  // Delete used pairing token
-  await prisma.$executeRaw`DELETE FROM pairing_tokens WHERE token = ${gatewayToken}`;
+  // DON'T delete pairing token yet - wait until hello-ok is sent successfully
 
   await logSecurityEvent(
     device.id,
@@ -455,7 +495,8 @@ async function handleDevicePairing(
 
   return {
     success: true,
-    deviceToken: deviceTokenPayload
+    deviceToken: deviceTokenPayload,
+    gatewayToken // Return token so it can be deleted after successful handshake
   };
 }
 
