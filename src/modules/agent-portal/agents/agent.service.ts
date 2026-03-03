@@ -278,10 +278,13 @@ export async function getAgentDetail(idOrSlug: string) {
     .map(log => log.changedBy)
     .filter(id => id !== null);
   
-  const changers = await prisma.user.findMany({
-    where: { id: { in: changedByIds } },
-    select: { id: true, email: true },
-  });
+  // Only query if there are valid IDs to fetch
+  const changers = changedByIds.length > 0 
+    ? await prisma.user.findMany({
+        where: { id: { in: changedByIds } },
+        select: { id: true, email: true },
+      })
+    : [];
 
   const changerMap = new Map(changers.map(c => [c.id, c]));
 

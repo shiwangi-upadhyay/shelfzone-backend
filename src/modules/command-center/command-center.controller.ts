@@ -69,17 +69,20 @@ export async function handleSendMessage(
     // First create the task trace (required for traceSession)
     const taskTrace = await prisma.taskTrace.create({
       data: {
-        userId,
-        agentId,
-        status: 'in_progress',
         instruction: message,
+        status: 'in_progress',
         startedAt,
+        owner: {
+          connect: { id: userId }
+        },
+        masterAgent: {
+          connect: { id: agentId }
+        }
       },
     });
 
     const traceSession = await prisma.traceSession.create({
       data: {
-        taskTraceId: taskTrace.id,
         status: 'running',
         startedAt,
         agent: {
