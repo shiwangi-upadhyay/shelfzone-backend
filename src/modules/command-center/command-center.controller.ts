@@ -11,6 +11,29 @@ import { createConversation } from './conversation.service.js';
 
 const agentContextService = new AgentContextService(prisma);
 
+/**
+ * Resolve agent identifier to database ID.
+ * Accepts either the database ID (e.g., 'main-001') or the slug/name (e.g., 'main').
+ * Returns the agent record or null if not found.
+ */
+export async function resolveAgent(agentIdentifier: string) {
+  // First try to find by ID directly
+  let agent = await prisma.agentRegistry.findUnique({
+    where: { id: agentIdentifier },
+    include: { node: true }
+  });
+
+  // If not found by ID, try by name/slug
+  if (!agent) {
+    agent = await prisma.agentRegistry.findFirst({
+      where: { name: agentIdentifier },
+      include: { node: true }
+    });
+  }
+
+  return agent;
+}
+
 export async function handleSendMessage(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -24,31 +47,29 @@ export async function handleSendMessage(
     });
   }
 
-  const { agentId, conversationId, message, attachments } = validation.data;
+  const { agentId: agentIdentifier, conversationId, message, attachments } = validation.data;
   const userId = request.user!.userId;
 
   try {
+    // Resolve agent identifier (accepts both database ID like 'main-001' and slug like 'main')
+    const agent = await resolveAgent(agentIdentifier);
+
+    if (!agent) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: 'Agent not found'
+      });
+    }
+
+    // Use the resolved database ID for all subsequent operations
+    const agentId = agent.id;
+
     // Check if user has permission to use this agent (either owner or shared with control permission)
     const canControl = await agentSharingService.canUserControlAgent(agentId, userId);
     if (!canControl) {
       return reply.status(403).send({
         error: 'Forbidden',
         message: 'You do not have permission to send messages to this agent',
-      });
-    }
-
-    // Check if this agent runs on a remote node
-    const agent = await prisma.agentRegistry.findUnique({
-      where: { id: agentId },
-      include: {
-        node: true
-      }
-    });
-
-    if (!agent) {
-      return reply.status(404).send({
-        error: 'Not Found',
-        message: 'Agent not found'
       });
     }
 

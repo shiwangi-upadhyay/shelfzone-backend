@@ -292,9 +292,36 @@ export class AgentSharingService {
   }
 
   /**
-   * Check if user has access to agent (either owner or shared with control permission)
+   * Resolve agent identifier to database ID.
+   * Accepts either the database ID (e.g., 'main-001') or the slug/name (e.g., 'main').
    */
-  async canUserControlAgent(agentId: string, userId: string): Promise<boolean> {
+  private async resolveAgentId(agentIdentifier: string): Promise<string | null> {
+    // First try to find by ID directly
+    let agent = await prisma.agentRegistry.findUnique({
+      where: { id: agentIdentifier },
+      select: { id: true }
+    });
+
+    // If not found by ID, try by name/slug
+    if (!agent) {
+      agent = await prisma.agentRegistry.findFirst({
+        where: { name: agentIdentifier },
+        select: { id: true }
+      });
+    }
+
+    return agent?.id || null;
+  }
+
+  /**
+   * Check if user has access to agent (either owner or shared with control permission)
+   * Accepts both database ID (e.g., 'main-001') and slug (e.g., 'main')
+   */
+  async canUserControlAgent(agentIdentifier: string, userId: string): Promise<boolean> {
+    // Resolve identifier to database ID
+    const agentId = await this.resolveAgentId(agentIdentifier);
+    if (!agentId) return false;
+
     // Check if owner
     const agent = await prisma.agentRegistry.findFirst({
       where: { id: agentId, createdBy: userId },
@@ -317,8 +344,13 @@ export class AgentSharingService {
 
   /**
    * Check if user has view access to agent
+   * Accepts both database ID (e.g., 'main-001') and slug (e.g., 'main')
    */
-  async canUserViewAgent(agentId: string, userId: string): Promise<boolean> {
+  async canUserViewAgent(agentIdentifier: string, userId: string): Promise<boolean> {
+    // Resolve identifier to database ID
+    const agentId = await this.resolveAgentId(agentIdentifier);
+    if (!agentId) return false;
+
     // Check if owner
     const agent = await prisma.agentRegistry.findFirst({
       where: { id: agentId, createdBy: userId },
