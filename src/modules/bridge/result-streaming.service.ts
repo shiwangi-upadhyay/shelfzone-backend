@@ -1,7 +1,7 @@
 import { FastifyReply } from 'fastify';
 import { prisma } from '../../lib/prisma.js';
 import BridgeEventEmitter from './event-emitter.js';
-import { BridgeEvent } from '@prisma/client';
+import { BridgeEvent, Prisma } from '@prisma/client';
 
 /**
  * Wait for session to complete or timeout
@@ -112,19 +112,101 @@ export async function streamResultsToClient(
   // Wait for session to complete or timeout (5 minutes)
   await waitForSessionComplete(sessionId, 300000);
 
-  // Send final cost
+  // Calculate and attribute costs before sending final event
   try {
+    // Get the session with related data
     const session = await prisma.bridgeSession.findUnique({
       where: { id: sessionId },
-      select: { totalCost: true, tokensUsed: true, status: true }
+      include: { 
+        agent: true, 
+        node: true,
+        instructor: { select: { id: true } }
+      }
     });
 
     if (session) {
+      // Get instruction event to calculate input tokens
+      const instructionEvent = await prisma.bridgeEvent.findFirst({
+        where: { 
+          bridgeSessionId: sessionId,
+          type: 'INSTRUCTION'
+        },
+        select: { content: true }
+      });
+
+      // Calculate total cost from all response events
+      const responseEvents = await prisma.bridgeEvent.findMany({
+        where: { 
+          bridgeSessionId: sessionId,
+          type: 'RESPONSE'
+        },
+        select: { content: true }
+      });
+
+      // Estimate tokens (rough: ~4 chars per token)
+      const instructionLength = instructionEvent?.content?.length || 0;
+      const totalResponseChars = responseEvents.reduce((sum, e) => sum + (e.content?.length || 0), 0);
+      
+      const inputTokens = Math.ceil(instructionLength / 4);
+      const outputTokens = Math.ceil(totalResponseChars / 4);
+
+      // Calculate cost (Claude Sonnet 4.5 pricing)
+      // Input: $0.003/1K, Output: $0.015/1K
+      const inputCost = (inputTokens / 1000) * 0.003;
+      const outputCost = (outputTokens / 1000) * 0.015;
+      const totalCost = inputCost + outputCost;
+
+      // Update bridge session with cost data
+      await prisma.bridgeSession.update({
+        where: { id: sessionId },
+        data: {
+          totalCost: new Prisma.Decimal(totalCost.toFixed(6)),
+          tokensUsed: inputTokens + outputTokens,
+          status: session.status === 'ERROR' ? 'ERROR' : 'COMPLETED',
+          endedAt: new Date()
+        }
+      });
+
+      // Create task trace for this bridge session (required for trace_session)
+      const taskTrace = await prisma.taskTrace.create({
+        data: {
+          ownerId: session.instructorId,
+          masterAgentId: session.agentId,
+          instruction: instructionEvent?.content || 'Remote agent execution',
+          status: session.status === 'ERROR' ? 'failed' : 'completed',
+          totalCost: new Prisma.Decimal(totalCost.toFixed(6)),
+          totalTokens: inputTokens + outputTokens,
+          agentsUsed: 1,
+          completedAt: new Date()
+        }
+      });
+
+      // Create trace_session entry for billing
+      // Cost is paid by the node OWNER (not the instructor who used it)
+      await prisma.traceSession.create({
+        data: {
+          taskTraceId: taskTrace.id,
+          agentId: session.agentId,
+          costPaidBy: session.node.userId, // OWNER pays, not instructor
+          modelUsed: 'remote-bridge',
+          status: session.status === 'ERROR' ? 'error' : 'success',
+          cost: new Prisma.Decimal(totalCost.toFixed(6)),
+          tokensIn: inputTokens,
+          tokensOut: outputTokens,
+          durationMs: session.endedAt 
+            ? session.endedAt.getTime() - session.startedAt.getTime()
+            : Date.now() - session.startedAt.getTime(),
+          completedAt: new Date(),
+          sessionType: 'remote-bridge'
+        }
+      });
+
+      // Send cost event to client
       reply.raw.write(encoder.encode(
         `event: cost\ndata: ${JSON.stringify({
-          totalCost: session.totalCost.toNumber(),
-          tokensUsed: session.tokensUsed,
-          status: session.status
+          totalCost: totalCost,
+          tokensUsed: inputTokens + outputTokens,
+          status: session.status === 'ERROR' ? 'ERROR' : 'COMPLETED'
         })}\n\n`
       ));
     }
@@ -132,6 +214,7 @@ export async function streamResultsToClient(
     reply.raw.write(encoder.encode(`event: done\ndata: {}\n\n`));
   } catch (error) {
     // Ignore errors on final events
+    console.error('Error calculating bridge session cost:', error);
   }
 
   reply.raw.end();
