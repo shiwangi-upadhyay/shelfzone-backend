@@ -38,6 +38,8 @@ import commandCenterRoutes from './modules/command-center/command-center.routes.
 import agentSharingRoutes from './modules/agent-sharing/agent-sharing.routes.js';
 import { bridgeRoutes } from './modules/bridge/bridge.routes.js';
 import { initializeBridgeWebSocket } from './modules/bridge/websocket-server.js';
+import { initializeSecureBridgeWebSocket } from './modules/bridge/websocket-server-secure.js';
+import devicePairingRoutes from './routes/device-pairing.routes.js';
 import { sanitizeBody } from './middleware/sanitize.middleware.js';
 
 const app = Fastify({ logger: true });
@@ -96,6 +98,9 @@ await app.register(agentSharingRoutes, { prefix: '/api' });
 // Agent Bridge (Phase 4B)
 await app.register(bridgeRoutes, { prefix: '/api/bridge/nodes' });
 
+// Device Pairing (Security)
+await app.register(devicePairingRoutes, { prefix: '/api/devices' });
+
 // Settings
 await app.register(gatewayKeyRoutes);
 
@@ -118,8 +123,9 @@ const start = async () => {
   try {
     await app.listen({ port: env.PORT, host: '0.0.0.0' });
     
-    // Initialize WebSocket server for Agent Bridge
+    // Initialize WebSocket servers for Agent Bridge
     initializeBridgeWebSocket(app.server);
+    initializeSecureBridgeWebSocket(app.server);
   } catch (err) {
     app.log.error(err);
     process.exit(1);
